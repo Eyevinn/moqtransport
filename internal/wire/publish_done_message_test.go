@@ -10,12 +10,12 @@ import (
 
 func TestSubscribeDoneMessageAppend(t *testing.T) {
 	cases := []struct {
-		srm    SubscribeDoneMessage
+		srm    PublishDoneMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   0,
 				StreamCount:  0,
@@ -25,7 +25,7 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 			expect: []byte{0x00, 0x00, 0x00, 0x00},
 		},
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   1,
 				StreamCount:  2,
@@ -40,7 +40,7 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    17,
 				StatusCode:   1,
 				StreamCount:  4,
@@ -56,7 +56,7 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   0,
 				StreamCount:  0,
@@ -66,7 +66,7 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 			expect: []byte{0x00, 0x00, 0x00, 0x00},
 		},
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   1,
 				StreamCount:  2,
@@ -81,7 +81,7 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			srm: SubscribeDoneMessage{
+			srm: PublishDoneMessage{
 				RequestID:    17,
 				StatusCode:   1,
 				StreamCount:  2,
@@ -108,24 +108,24 @@ func TestSubscribeDoneMessageAppend(t *testing.T) {
 func TestParseSubscribeDoneMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *SubscribeDoneMessage
+		expect *PublishDoneMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &SubscribeDoneMessage{},
+			expect: &PublishDoneMessage{},
 			err:    io.EOF,
 		},
 		{
 			data:   []byte{},
-			expect: &SubscribeDoneMessage{},
+			expect: &PublishDoneMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: []byte{
 				0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 			},
-			expect: &SubscribeDoneMessage{
+			expect: &PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   0,
 				StreamCount:  0,
@@ -143,7 +143,7 @@ func TestParseSubscribeDoneMessage(t *testing.T) {
 				0x02,
 				0x03,
 			},
-			expect: &SubscribeDoneMessage{
+			expect: &PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   1,
 				StreamCount:  2,
@@ -159,7 +159,7 @@ func TestParseSubscribeDoneMessage(t *testing.T) {
 				0x06, 'r', 'e', 'a', 's', 'o', 'n',
 				0x00,
 			},
-			expect: &SubscribeDoneMessage{
+			expect: &PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   1,
 				StreamCount:  2,
@@ -171,7 +171,7 @@ func TestParseSubscribeDoneMessage(t *testing.T) {
 			data: []byte{
 				0x00, 0x00, 0x00, 0x00,
 			},
-			expect: &SubscribeDoneMessage{
+			expect: &PublishDoneMessage{
 				RequestID:    0,
 				StatusCode:   0,
 				StreamCount:  0,
@@ -182,7 +182,7 @@ func TestParseSubscribeDoneMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &SubscribeDoneMessage{}
+			res := &PublishDoneMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {

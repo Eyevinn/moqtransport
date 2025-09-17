@@ -6,16 +6,16 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
-type SubscribeDoneMessage struct {
+type PublishDoneMessage struct {
 	RequestID    uint64
 	StatusCode   uint64
 	StreamCount  uint64
 	ReasonPhrase string
 }
 
-func (m *SubscribeDoneMessage) LogValue() slog.Value {
+func (m *PublishDoneMessage) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("type", "subscribe_done"),
+		slog.String("type", "publish_done"),
 		slog.Uint64("request_id", m.RequestID),
 		slog.Uint64("status_code", m.StatusCode),
 		slog.Uint64("stream_count", m.StreamCount),
@@ -23,11 +23,11 @@ func (m *SubscribeDoneMessage) LogValue() slog.Value {
 	)
 }
 
-func (m SubscribeDoneMessage) Type() controlMessageType {
-	return messageTypeSubscribeDone
+func (m PublishDoneMessage) Type() controlMessageType {
+	return messageTypePublishDone
 }
 
-func (m *SubscribeDoneMessage) Append(buf []byte) []byte {
+func (m *PublishDoneMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = quicvarint.Append(buf, m.StatusCode)
 	buf = quicvarint.Append(buf, m.StreamCount)
@@ -35,7 +35,7 @@ func (m *SubscribeDoneMessage) Append(buf []byte) []byte {
 	return buf
 }
 
-func (m *SubscribeDoneMessage) parse(_ Version, data []byte) (err error) {
+func (m *PublishDoneMessage) parse(_ Version, data []byte) (err error) {
 	var n int
 	m.RequestID, n, err = quicvarint.Parse(data)
 	if err != nil {

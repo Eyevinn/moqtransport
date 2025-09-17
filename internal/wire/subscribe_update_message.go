@@ -7,12 +7,13 @@ import (
 )
 
 type SubscribeUpdateMessage struct {
-	RequestID          uint64
-	StartLocation      Location
-	EndGroup           uint64
-	SubscriberPriority uint8
-	Forward            uint8
-	Parameters         KVPList
+	RequestID             uint64
+	SubscriptionRequestID uint64
+	StartLocation         Location
+	EndGroup              uint64
+	SubscriberPriority    uint8
+	Forward               uint8
+	Parameters            KVPList
 }
 
 func (m *SubscribeUpdateMessage) LogValue() slog.Value {
@@ -39,6 +40,7 @@ func (m SubscribeUpdateMessage) Type() controlMessageType {
 
 func (m *SubscribeUpdateMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
+	buf = quicvarint.Append(buf, m.SubscriptionRequestID)
 	buf = m.StartLocation.append(buf)
 	buf = quicvarint.Append(buf, m.EndGroup)
 	buf = append(buf, m.SubscriberPriority)
@@ -50,6 +52,12 @@ func (m *SubscribeUpdateMessage) parse(v Version, data []byte) (err error) {
 	var n int
 
 	m.RequestID, n, err = quicvarint.Parse(data)
+	if err != nil {
+		return err
+	}
+	data = data[n:]
+
+	m.SubscriptionRequestID, n, err = quicvarint.Parse(data)
 	if err != nil {
 		return err
 	}

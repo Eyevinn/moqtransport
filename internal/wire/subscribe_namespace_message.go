@@ -7,15 +7,15 @@ import (
 )
 
 // TODO: Add tests
-type SubscribeAnnouncesMessage struct {
+type SubscribeNamespaceMessage struct {
 	RequestID            uint64
 	TrackNamespacePrefix Tuple
 	Parameters           KVPList
 }
 
-func (m *SubscribeAnnouncesMessage) LogValue() slog.Value {
+func (m *SubscribeNamespaceMessage) LogValue() slog.Value {
 	attrs := []slog.Attr{
-		slog.String("type", "subscribe_announces"),
+		slog.String("type", "subscribe_namespace"),
 		slog.Any("track_namespace_prefix", m.TrackNamespacePrefix),
 		slog.Uint64("number_of_parameters", uint64(len(m.Parameters))),
 	}
@@ -27,17 +27,17 @@ func (m *SubscribeAnnouncesMessage) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func (m SubscribeAnnouncesMessage) Type() controlMessageType {
+func (m SubscribeNamespaceMessage) Type() controlMessageType {
 	return messageTypeSubscribeNamespace
 }
 
-func (m *SubscribeAnnouncesMessage) Append(buf []byte) []byte {
+func (m *SubscribeNamespaceMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = m.TrackNamespacePrefix.append(buf)
 	return m.Parameters.appendNum(buf)
 }
 
-func (m *SubscribeAnnouncesMessage) parse(_ Version, data []byte) (err error) {
+func (m *SubscribeNamespaceMessage) parse(_ Version, data []byte) (err error) {
 	var n int
 	m.RequestID, n, err = quicvarint.Parse(data)
 	if err != nil {

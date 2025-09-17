@@ -10,12 +10,12 @@ import (
 
 func TestAnnounceCancelMessageAppend(t *testing.T) {
 	cases := []struct {
-		aom    AnnounceCancelMessage
+		aom    PublishNamespaceCancelMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			aom: AnnounceCancelMessage{
+			aom: PublishNamespaceCancelMessage{
 				TrackNamespace: []string{""},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -26,7 +26,7 @@ func TestAnnounceCancelMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			aom: AnnounceCancelMessage{
+			aom: PublishNamespaceCancelMessage{
 				TrackNamespace: []string{"tracknamespace"},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -51,19 +51,19 @@ func TestAnnounceCancelMessageAppend(t *testing.T) {
 func TestParseAnnounceCancelMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *AnnounceCancelMessage
+		expect *PublishNamespaceCancelMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &AnnounceCancelMessage{},
+			expect: &PublishNamespaceCancelMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append(
 				[]byte{0x01, 0x0E}, append([]byte("tracknamespace"), 0x00, 0x00)...,
 			),
-			expect: &AnnounceCancelMessage{
+			expect: &PublishNamespaceCancelMessage{
 				TrackNamespace: []string{"tracknamespace"},
 				ErrorCode:      0,
 				ReasonPhrase:   "",
@@ -72,7 +72,7 @@ func TestParseAnnounceCancelMessage(t *testing.T) {
 		},
 		{
 			data: append([]byte{0x01, 0x05}, append([]byte("track"), []byte{0x01, 0x06, 'r', 'e', 'a', 's', 'o', 'n', 'p', 'h', 'r', 'a', 's', 'e'}...)...),
-			expect: &AnnounceCancelMessage{
+			expect: &PublishNamespaceCancelMessage{
 				TrackNamespace: []string{"track"},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -81,7 +81,7 @@ func TestParseAnnounceCancelMessage(t *testing.T) {
 		},
 		{
 			data: append([]byte{0x01, 0x0F}, "tracknamespace"...),
-			expect: &AnnounceCancelMessage{
+			expect: &PublishNamespaceCancelMessage{
 				TrackNamespace: []string{},
 			},
 			err: errLengthMismatch,
@@ -89,7 +89,7 @@ func TestParseAnnounceCancelMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &AnnounceCancelMessage{}
+			res := &PublishNamespaceCancelMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {

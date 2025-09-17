@@ -14,7 +14,7 @@ type PublishErrorMessage struct {
 
 func (m *PublishErrorMessage) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("type", "subscribe_error"),
+		slog.String("type", "publish_error"),
 		slog.Uint64("request_id", m.RequestID),
 		slog.Uint64("error_code", m.ErrorCode),
 		slog.String("reason", m.ReasonPhrase),

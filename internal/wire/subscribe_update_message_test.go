@@ -16,7 +16,8 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 	}{
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 0,
+				RequestID:             0,
+				SubscriptionRequestID: 0,
 				StartLocation: Location{
 					Group:  0,
 					Object: 0,
@@ -28,12 +29,13 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 			},
 			buf: []byte{},
 			expect: []byte{
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			},
 		},
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             1,
+				SubscriptionRequestID: 9,
 				StartLocation: Location{
 					Group:  2,
 					Object: 3,
@@ -44,11 +46,12 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 				Parameters:         KVPList{KeyValuePair{Type: PathParameterKey, ValueBytes: []byte("A")}},
 			},
 			buf:    []byte{},
-			expect: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
+			expect: []byte{0x01, 0x09, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
 		},
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             1,
+				SubscriptionRequestID: 9,
 				StartLocation: Location{
 					Group:  2,
 					Object: 3,
@@ -59,7 +62,7 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 				Parameters:         KVPList{KeyValuePair{Type: PathParameterKey, ValueBytes: []byte("A")}},
 			},
 			buf:    []byte{0x0a, 0x0b},
-			expect: []byte{0x0a, 0x0b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
+			expect: []byte{0x0a, 0x0b, 0x01, 0x09, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
 		},
 	}
 	for i, tc := range cases {
@@ -87,9 +90,10 @@ func TestParseSubscribeUpdateMessage(t *testing.T) {
 			err:    io.EOF,
 		},
 		{
-			data: []byte{0x00, 0x01, 0x02},
+			data: []byte{0x00, 0x09, 0x01, 0x02},
 			expect: &SubscribeUpdateMessage{
-				RequestID: 0,
+				RequestID:             0,
+				SubscriptionRequestID: 9,
 				StartLocation: Location{
 					Group:  1,
 					Object: 2,
@@ -102,9 +106,10 @@ func TestParseSubscribeUpdateMessage(t *testing.T) {
 			err: io.EOF,
 		},
 		{
-			data: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'P'},
+			data: []byte{0x01, 0x09, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'P'},
 			expect: &SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             1,
+				SubscriptionRequestID: 9,
 				StartLocation: Location{
 					Group:  2,
 					Object: 3,

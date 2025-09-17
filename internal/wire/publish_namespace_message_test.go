@@ -10,12 +10,12 @@ import (
 
 func TestAnnounceMessageAppend(t *testing.T) {
 	cases := []struct {
-		am     AnnounceMessage
+		am     PublishNamespaceMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			am: AnnounceMessage{
+			am: PublishNamespaceMessage{
 				RequestID:      0,
 				TrackNamespace: []string{""},
 				Parameters:     KVPList{},
@@ -26,7 +26,7 @@ func TestAnnounceMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			am: AnnounceMessage{
+			am: PublishNamespaceMessage{
 				RequestID:      1,
 				TrackNamespace: []string{"tracknamespace"},
 				Parameters:     KVPList{},
@@ -46,22 +46,22 @@ func TestAnnounceMessageAppend(t *testing.T) {
 func TestParseAnnounceMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *AnnounceMessage
+		expect *PublishNamespaceMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &AnnounceMessage{},
+			expect: &PublishNamespaceMessage{},
 			err:    io.EOF,
 		},
 		{
 			data:   []byte{},
-			expect: &AnnounceMessage{},
+			expect: &PublishNamespaceMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append(append([]byte{0x00, 0x01, 0x09}, "trackname"...), 0x00),
-			expect: &AnnounceMessage{
+			expect: &PublishNamespaceMessage{
 				RequestID:      0,
 				TrackNamespace: []string{"trackname"},
 				Parameters:     KVPList{},
@@ -71,7 +71,7 @@ func TestParseAnnounceMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &AnnounceMessage{}
+			res := &PublishNamespaceMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {
