@@ -26,7 +26,6 @@ var (
 	errUnknownTrackAlias                = errors.New("unknown track alias")
 	errMissingPathParameter             = errors.New("missing path parameter")
 	errUnexpectedPathParameter          = errors.New("unexpected path parameter on QUIC connection")
-	errUnknownTrackStatusRequest        = errors.New("got unexpected track status requrest")
 )
 
 type controlMessageStream interface {
@@ -85,8 +84,6 @@ type Session struct {
 	trackAliases *sequence
 	remoteTracks *remoteTrackMap
 	localTracks  *localTrackMap
-
-	outgoingTrackStatusRequests *trackStatusRequestMap
 }
 
 func (s *Session) Run(conn Connection) error {
@@ -119,7 +116,6 @@ func (s *Session) Run(conn Connection) error {
 	s.trackAliases = newSequence(0, 1)
 	s.remoteTracks = newRemoteTrackMap()
 	s.localTracks = newLocalTrackMap()
-	s.outgoingTrackStatusRequests = newTrackStatusRequestMap()
 	s.controlStream = &controlStream{
 		stream:  cs,
 		logger:  defaultLogger.With("perspective", conn.Perspective()),
@@ -401,6 +397,12 @@ func WithSubscribeParameters(parameters KVPList) SubscribeOption {
 	}
 }
 
+func TrackStatus() SubscribeOption {
+	return func(so *SubscribeOptions) {
+		so.TrackStatus = true
+	}
+}
+
 // SubscribeUpdateOption is a functional option for configuring SUBSCRIBE_UPDATE requests.
 type SubscribeUpdateOption func(*SubscribeUpdateOptions)
 
@@ -520,6 +522,7 @@ func (s *Session) Subscribe(
 	}
 
 	cm := &wire.SubscribeMessage{
+		TrackStatus:        opts.TrackStatus,
 		RequestID:          requestID,
 		TrackNamespace:     namespace,
 		TrackName:          []byte(name),
@@ -755,44 +758,6 @@ func (s *Session) fetchCancel(id uint64) error {
 	})
 }
 
-func (s *Session) RequestTrackStatus(ctx context.Context, namespace []string, track string) (*TrackStatus, error) {
-	requestID, err := s.getRequestID()
-	if err != nil {
-		return nil, err
-	}
-	tsr := &trackStatusRequest{
-		requestID: requestID,
-		namespace: namespace,
-		trackname: track,
-		response:  make(chan *TrackStatus, 1),
-	}
-
-	s.outgoingTrackStatusRequests.add(tsr)
-	tsrm := &wire.TrackStatusRequestMessage{
-		TrackNamespace: namespace,
-		TrackName:      []byte(track),
-	}
-	if err := s.controlStream.write(tsrm); err != nil {
-		_, _ = s.outgoingTrackStatusRequests.delete(tsrm.RequestID)
-		return nil, err
-	}
-	select {
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	case status := <-tsr.response:
-		return status, nil
-	}
-}
-
-func (s *Session) sendTrackStatus(ts TrackStatus) error {
-	return s.controlStream.write(&wire.TrackStatusMessage{
-		StatusCode:      ts.StatusCode,
-		RequestID:       0,
-		LargestLocation: wire.Location{},
-		Parameters:      wire.KVPList{},
-	})
-}
-
 // Announce announces namespace to the peer. It blocks until a response from the
 // peer was received or ctx is cancelled and returns an error if the
 // announcement was rejected.
@@ -936,12 +901,15 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 
 	var err error
 	switch m := msg.(type) {
+
 	case *wire.GoAwayMessage:
 		s.onGoAway(m)
+
 	case *wire.MaxRequestIDMessage:
 		err = s.onMaxRequestID(m)
 	case *wire.RequestsBlockedMessage:
 		err = s.onRequestsBlocked(m)
+
 	case *wire.SubscribeMessage:
 		err = s.onSubscribe(m)
 	case *wire.SubscribeOkMessage:
@@ -952,8 +920,16 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 		err = s.onSubscribeUpdate(m)
 	case *wire.UnsubscribeMessage:
 		err = s.onUnsubscribe(m)
+
 	case *wire.PublishDoneMessage:
 		err = s.onSubscribeDone(m)
+	case *wire.PublishMessage:
+		panic("TODO")
+	case *wire.PublishOkMessage:
+		panic("TODO")
+	case *wire.PublishErrorMessage:
+		panic("TODO")
+
 	case *wire.FetchMessage:
 		err = s.onFetch(m)
 	case *wire.FetchOkMessage:
@@ -962,10 +938,7 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 		err = s.onFetchError(m)
 	case *wire.FetchCancelMessage:
 		err = s.onFetchCancel(m)
-	case *wire.TrackStatusRequestMessage:
-		err = s.onTrackStatusRequest(m)
-	case *wire.TrackStatusMessage:
-		err = s.onTrackStatus(m)
+
 	case *wire.PublishNamespaceMessage:
 		err = s.onAnnounce(m)
 	case *wire.PublishNamespaceOkMessage:
@@ -976,6 +949,7 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 		err = s.onUnannounce(m)
 	case *wire.PublishNamespaceCancelMessage:
 		err = s.onAnnounceCancel(m)
+
 	case *wire.SubscribeNamespaceMessage:
 		err = s.onSubscribeAnnounces(m)
 	case *wire.SubscribeNamespaceOkMessage:
@@ -984,6 +958,7 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 		err = s.onSubscribeAnnouncesError(m)
 	case *wire.UnsubscribeNamespaceMessage:
 		s.onUnsubscribeAnnounces(m)
+
 	default:
 		err = errUnexpectedMessageType
 	}
@@ -1092,26 +1067,32 @@ func (s *Session) onSubscribe(msg *wire.SubscribeMessage) error {
 		EndGroup:           nil,
 		Parameters:         FromWire(msg.Parameters),
 	}
-	lt := newLocalTrack(s.conn, m.RequestID, s.trackAliases.next(), func(code, count uint64, reason string) error {
-		return s.subscriptionDone(m.RequestID, code, count, reason)
-	}, s.Qlogger)
+	var lt *localTrack
+	trackAlias := uint64(0)
+	if !msg.TrackStatus {
+		trackAlias = s.trackAliases.next()
+		lt = newLocalTrack(s.conn, m.RequestID, trackAlias, func(code, count uint64, reason string) error {
+			return s.subscriptionDone(m.RequestID, code, count, reason)
+		}, s.Qlogger)
 
-	if err := s.addLocalTrack(lt); err != nil {
-		code := ErrorCodeInternal
-		reason := "internal"
-		if err == errMaxRequestIDViolated {
-			code = ErrorCodeTooManyRequests
-			reason = "too many subscribes"
+		if err := s.addLocalTrack(lt); err != nil {
+			code := ErrorCodeInternal
+			reason := "internal"
+			if err == errMaxRequestIDViolated {
+				code = ErrorCodeTooManyRequests
+				reason = "too many subscribes"
+			}
+			return s.controlStream.write(&wire.SubscribeErrorMessage{
+				RequestID:    lt.requestID,
+				ErrorCode:    uint64(code),
+				ReasonPhrase: reason,
+			})
 		}
-		return s.controlStream.write(&wire.SubscribeErrorMessage{
-			RequestID:    lt.requestID,
-			ErrorCode:    uint64(code),
-			ReasonPhrase: reason,
-		})
 	}
+
 	srw := &SubscribeResponseWriter{
 		id:         m.RequestID,
-		trackAlias: lt.trackAlias,
+		trackAlias: trackAlias,
 		session:    s,
 		localTrack: lt,
 		handled:    false,
@@ -1301,51 +1282,6 @@ func (s *Session) onFetchCancel(msg *wire.FetchCancelMessage) error {
 		return errUnknownRequestID
 	}
 	lt.unsubscribe()
-	return nil
-}
-
-func (s *Session) onTrackStatusRequest(msg *wire.TrackStatusRequestMessage) error {
-	if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
-		return errInvalidNamespaceLength
-	}
-	tsrw := &trackStatusResponseWriter{
-		session: s,
-		handled: false,
-		status: TrackStatus{
-			Namespace:    msg.TrackNamespace,
-			Trackname:    string(msg.TrackName),
-			StatusCode:   0,
-			LastGroupID:  0,
-			LastObjectID: 0,
-		},
-	}
-	s.Handler.Handle(tsrw, &Message{
-		Method:    MessageTrackStatusRequest,
-		Namespace: msg.TrackNamespace,
-		Track:     string(msg.TrackName),
-	})
-	if !tsrw.handled {
-		return tsrw.Reject(0, "")
-	}
-	return nil
-}
-
-func (s *Session) onTrackStatus(msg *wire.TrackStatusMessage) error {
-	tsr, ok := s.outgoingTrackStatusRequests.delete(msg.RequestID)
-	if !ok {
-		return errUnknownTrackStatusRequest
-	}
-	select {
-	case tsr.response <- &TrackStatus{
-		Namespace:    tsr.namespace,
-		Trackname:    tsr.trackname,
-		StatusCode:   msg.StatusCode,
-		LastGroupID:  msg.LargestLocation.Group,
-		LastObjectID: msg.LargestLocation.Object,
-	}:
-	default:
-		s.logger.Info("dropping unhandled track status")
-	}
 	return nil
 }
 

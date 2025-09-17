@@ -70,6 +70,8 @@ func (g GroupOrder) String() string {
 }
 
 type SubscribeMessage struct {
+	TrackStatus bool
+
 	RequestID          uint64
 	TrackNamespace     Tuple
 	TrackName          []byte
@@ -120,6 +122,9 @@ func (m *SubscribeMessage) LogValue() slog.Value {
 }
 
 func (m SubscribeMessage) Type() controlMessageType {
+	if m.TrackStatus {
+		return messageTypeTrackStatus
+	}
 	return messageTypeSubscribe
 }
 

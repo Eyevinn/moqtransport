@@ -8,6 +8,8 @@ import (
 )
 
 type SubscribeOkMessage struct {
+	TrackStatus bool
+
 	RequestID       uint64
 	TrackAlias      uint64
 	Expires         time.Duration
@@ -49,6 +51,9 @@ func (m *SubscribeOkMessage) LogValue() slog.Value {
 }
 
 func (m SubscribeOkMessage) Type() controlMessageType {
+	if m.TrackStatus {
+		return messageTypeTrackStatusOk
+	}
 	return messageTypeSubscribeOk
 }
 

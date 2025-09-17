@@ -131,6 +131,8 @@ func (kvpl KVPList) GetAuthorizationToken() ([]byte, bool) {
 // SubscribeOptions contains options for subscribing to a track with full control
 // over all subscribe message parameters.
 type SubscribeOptions struct {
+	TrackStatus bool
+
 	// SubscriberPriority indicates the delivery priority (0-255, higher is more important)
 	SubscriberPriority uint8
 

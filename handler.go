@@ -7,8 +7,6 @@ const (
 	MessageAnnounce             = "ANNOUNCE"
 	MessageAnnounceCancel       = "ANNOUNCE_CANCEL"
 	MessageUnannounce           = "UNANNOUNCE"
-	MessageTrackStatusRequest   = "TRACK_STATUS_REQUEST"
-	MessageTrackStatus          = "TRACK_STATUS"
 	MessageGoAway               = "GO_AWAY"
 	MessageSubscribeAnnounces   = "SUBSCRIBE_ANNOUNCES"
 	MessageUnsubscribeAnnounces = "UNSUBSCRIBE_ANNOUNCES"
@@ -68,17 +66,6 @@ type Publisher interface {
 type FetchPublisher interface {
 	// OpenFetchStream opens and returns a new fetch stream.
 	FetchStream() (*FetchStream, error)
-}
-
-// StatusRequestHandler is the interface implemented by ResponseWriters of
-// TrackStatusRequest messages. The first call to Accept sends the response.
-// Calling Reject sets the status to "track does not exist" and then calls
-// Accept. Reject ignores the errorCode and reasonPhrase. Applications are
-// responsible for following the ruls of track status messages.
-type StatusRequestHandler interface {
-	// SetStatus sets the status for the response. Call this before calling
-	// Accept.
-	SetStatus(statusCode, lastGroupID, lastObjectID uint64)
 }
 
 // Handler is the handler interface for non-specific  MoQ messages.

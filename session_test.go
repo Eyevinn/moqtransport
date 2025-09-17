@@ -41,7 +41,6 @@ func newSessionWithHandlers(conn Connection, cs controlMessageStream, h Handler,
 		highestRequestsBlocked:                   atomic.Uint64{},
 		remoteTracks:                             newRemoteTrackMap(),
 		localTracks:                              newLocalTrackMap(),
-		outgoingTrackStatusRequests:              newTrackStatusRequestMap(),
 		localMaxRequestID:                        atomic.Uint64{},
 		trackAliases:                             newSequence(0, 1),
 	}

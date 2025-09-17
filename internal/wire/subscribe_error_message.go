@@ -7,6 +7,8 @@ import (
 )
 
 type SubscribeErrorMessage struct {
+	TrackStatus bool
+
 	RequestID    uint64
 	ErrorCode    uint64
 	ReasonPhrase string
@@ -23,6 +25,9 @@ func (m *SubscribeErrorMessage) LogValue() slog.Value {
 }
 
 func (m SubscribeErrorMessage) Type() controlMessageType {
+	if m.TrackStatus {
+		return messageTypeTrackStatusError
+	}
 	return messageTypeSubscribeError
 }
 

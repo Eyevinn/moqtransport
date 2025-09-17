@@ -58,7 +58,7 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		m = &RequestsBlockedMessage{}
 
 	case messageTypeSubscribe:
-		m = &SubscribeMessage{}
+		m = &SubscribeMessage{TrackStatus: false}
 	case messageTypeSubscribeOk:
 		m = &SubscribeOkMessage{}
 	case messageTypeSubscribeError:
@@ -67,8 +67,15 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		m = &UnsubscribeMessage{}
 	case messageTypeSubscribeUpdate:
 		m = &SubscribeUpdateMessage{}
+
 	case messageTypePublishDone:
 		m = &PublishDoneMessage{}
+	case messageTypePublish:
+		m = &PublishMessage{}
+	case messageTypePublishOk:
+		m = &PublishOkMessage{}
+	case messageTypePublishError:
+		m = &PublishErrorMessage{}
 
 	case messageTypeFetch:
 		m = &FetchMessage{}
@@ -80,9 +87,11 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		m = &FetchCancelMessage{}
 
 	case messageTypeTrackStatus:
-		m = &TrackStatusRequestMessage{}
+		m = &SubscribeMessage{TrackStatus: true}
 	case messageTypeTrackStatusOk:
-		m = &TrackStatusMessage{}
+		m = &SubscribeOkMessage{}
+	case messageTypeTrackStatusError:
+		m = &SubscribeErrorMessage{}
 
 	case messageTypePublishNamespace:
 		m = &PublishNamespaceMessage{}
