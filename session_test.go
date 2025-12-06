@@ -371,12 +371,12 @@ func TestSession(t *testing.T) {
 		s := newSession(conn, cs, nil)
 		s.handshakeDone.Store(true)
 
-		cs.EXPECT().write(&wire.AnnounceMessage{
+		cs.EXPECT().write(&wire.PublishNamespaceMessage{
 			RequestID:      0,
 			TrackNamespace: []string{"namespace"},
 			Parameters:     wire.KVPList{},
 		}).DoAndReturn(func(_ wire.ControlMessage) error {
-			err := s.receive(&wire.AnnounceOkMessage{
+			err := s.receive(&wire.PublishNamespaceOkMessage{
 				RequestID: 0,
 			})
 			assert.NoError(t, err)
@@ -404,10 +404,10 @@ func TestSession(t *testing.T) {
 		}).DoAndReturn(func(rw ResponseWriter, req *Message) {
 			assert.NoError(t, rw.Accept())
 		})
-		cs.EXPECT().write(&wire.AnnounceOkMessage{
+		cs.EXPECT().write(&wire.PublishNamespaceOkMessage{
 			RequestID: 2,
 		})
-		err := s.receive(&wire.AnnounceMessage{
+		err := s.receive(&wire.PublishNamespaceMessage{
 			RequestID:      2,
 			TrackNamespace: []string{"namespace"},
 			Parameters:     wire.KVPList{},
@@ -503,15 +503,21 @@ func TestSession_UpdateSubscription(t *testing.T) {
 		_, err := s.remoteTracks.confirm(123)
 		assert.NoError(t, err)
 
-		// Expect SUBSCRIBE_UPDATE message to be written
-		cs.EXPECT().write(&wire.SubscribeUpdateMessage{
-			RequestID:          123,
-			StartLocation:      wire.Location{Group: 100, Object: 5},
-			EndGroup:           200,
-			SubscriberPriority: 64,
-			Forward:            1,
-			Parameters:         wire.KVPList{},
-		}).Return(nil)
+		// Set max request ID to allow getting a new request ID
+		_ = s.requestIDs.setMax(100)
+
+		// Expect SUBSCRIBE_UPDATE message to be written with a new RequestID
+		// The SubscriptionRequestID is 123 (the original subscription)
+		cs.EXPECT().write(gomock.Any()).DoAndReturn(func(msg wire.ControlMessage) error {
+			sum, ok := msg.(*wire.SubscribeUpdateMessage)
+			assert.True(t, ok)
+			assert.Equal(t, uint64(123), sum.SubscriptionRequestID)
+			assert.Equal(t, wire.Location{Group: 100, Object: 5}, sum.StartLocation)
+			assert.Equal(t, uint64(200), sum.EndGroup)
+			assert.Equal(t, uint8(64), sum.SubscriberPriority)
+			assert.Equal(t, uint8(1), sum.Forward)
+			return nil
+		})
 
 		// Test UpdateSubscription
 		err = s.UpdateSubscription(context.Background(), 123,

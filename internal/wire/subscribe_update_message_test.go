@@ -16,7 +16,8 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 	}{
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 0,
+				RequestID:             2,
+				SubscriptionRequestID: 1,
 				StartLocation: Location{
 					Group:  0,
 					Object: 0,
@@ -28,38 +29,40 @@ func TestSubscribeUpdateMessageAppend(t *testing.T) {
 			},
 			buf: []byte{},
 			expect: []byte{
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			},
 		},
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             2,
+				SubscriptionRequestID: 1,
 				StartLocation: Location{
-					Group:  2,
-					Object: 3,
+					Group:  3,
+					Object: 4,
 				},
-				EndGroup:           4,
-				SubscriberPriority: 5,
+				EndGroup:           5,
+				SubscriberPriority: 6,
 				Forward:            1,
 				Parameters:         KVPList{KeyValuePair{Type: PathParameterKey, ValueBytes: []byte("A")}},
 			},
 			buf:    []byte{},
-			expect: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
+			expect: []byte{0x02, 0x01, 0x03, 0x04, 0x05, 0x06, 0x01, 0x01, 0x01, 0x01, 'A'},
 		},
 		{
 			sum: SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             2,
+				SubscriptionRequestID: 1,
 				StartLocation: Location{
-					Group:  2,
-					Object: 3,
+					Group:  3,
+					Object: 4,
 				},
-				EndGroup:           4,
-				SubscriberPriority: 5,
+				EndGroup:           5,
+				SubscriberPriority: 6,
 				Forward:            1,
 				Parameters:         KVPList{KeyValuePair{Type: PathParameterKey, ValueBytes: []byte("A")}},
 			},
 			buf:    []byte{0x0a, 0x0b},
-			expect: []byte{0x0a, 0x0b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'A'},
+			expect: []byte{0x0a, 0x0b, 0x02, 0x01, 0x03, 0x04, 0x05, 0x06, 0x01, 0x01, 0x01, 0x01, 'A'},
 		},
 	}
 	for i, tc := range cases {
@@ -87,12 +90,13 @@ func TestParseSubscribeUpdateMessage(t *testing.T) {
 			err:    io.EOF,
 		},
 		{
-			data: []byte{0x00, 0x01, 0x02},
+			data: []byte{0x02, 0x01, 0x02, 0x03},
 			expect: &SubscribeUpdateMessage{
-				RequestID: 0,
+				RequestID:             2,
+				SubscriptionRequestID: 1,
 				StartLocation: Location{
-					Group:  1,
-					Object: 2,
+					Group:  2,
+					Object: 3,
 				},
 				EndGroup:           0,
 				SubscriberPriority: 0,
@@ -102,15 +106,16 @@ func TestParseSubscribeUpdateMessage(t *testing.T) {
 			err: io.EOF,
 		},
 		{
-			data: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x01, 0x01, 0x01, 0x01, 'P'},
+			data: []byte{0x02, 0x01, 0x03, 0x04, 0x05, 0x06, 0x01, 0x01, 0x01, 0x01, 'P'},
 			expect: &SubscribeUpdateMessage{
-				RequestID: 1,
+				RequestID:             2,
+				SubscriptionRequestID: 1,
 				StartLocation: Location{
-					Group:  2,
-					Object: 3,
+					Group:  3,
+					Object: 4,
 				},
-				EndGroup:           4,
-				SubscriberPriority: 5,
+				EndGroup:           5,
+				SubscriberPriority: 6,
 				Forward:            1,
 				Parameters:         KVPList{KeyValuePair{Type: PathParameterKey, ValueBytes: []byte("P")}},
 			},

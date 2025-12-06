@@ -10,39 +10,36 @@ import (
 
 func TestTrackStatusMessageAppend(t *testing.T) {
 	cases := []struct {
-		tsm    TrackStatusMessage
+		aom    TrackStatusMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			tsm: TrackStatusMessage{
-				RequestID:  0,
-				StatusCode: 0,
-				LargestLocation: Location{
-					Group:  0,
-					Object: 0,
-				},
+			aom: TrackStatusMessage{
+				RequestID:      0,
+				TrackNamespace: []string{""},
+				TrackName:      []byte(""),
+				Parameters:     KVPList{},
 			},
-			buf:    []byte{},
-			expect: []byte{0x00, 0x00, 0x00, 0x00, 0x00},
+			buf: []byte{},
+			expect: []byte{
+				0x00, 0x01, 0x00, 0x00, 0x00,
+			},
 		},
 		{
-			tsm: TrackStatusMessage{
-				RequestID:  1,
-				StatusCode: 2,
-				LargestLocation: Location{
-					Group:  1,
-					Object: 2,
-				},
-				Parameters: KVPList{},
+			aom: TrackStatusMessage{
+				RequestID:      0,
+				TrackNamespace: []string{"tracknamespace"},
+				TrackName:      []byte("track"),
+				Parameters:     KVPList{},
 			},
 			buf:    []byte{0x0a, 0x0b},
-			expect: []byte{0x0a, 0x0b, 0x01, 0x02, 0x01, 0x02, 0x00},
+			expect: []byte{0x0a, 0x0b, 0x00, 0x01, 0x0e, 't', 'r', 'a', 'c', 'k', 'n', 'a', 'm', 'e', 's', 'p', 'a', 'c', 'e', 0x05, 't', 'r', 'a', 'c', 'k', 0x00},
 		},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := tc.tsm.Append(tc.buf)
+			res := tc.aom.Append(tc.buf)
 			assert.Equal(t, tc.expect, res)
 		})
 	}
@@ -60,22 +57,24 @@ func TestParseTrackStatusMessage(t *testing.T) {
 			err:    io.EOF,
 		},
 		{
-			data:   []byte{},
-			expect: &TrackStatusMessage{},
-			err:    io.EOF,
-		},
-		{
-			data: []byte{0x01, 0x02, 0x03, 0x04, 0x00},
+			data: []byte{0x00, 0x01, 0x0e, 't', 'r', 'a', 'c', 'k', 'n', 'a', 'm', 'e', 's', 'p', 'a', 'c', 'e', 0x05, 't', 'r', 'a', 'c', 'k', 0x00},
 			expect: &TrackStatusMessage{
-				RequestID:  1,
-				StatusCode: 2,
-				LargestLocation: Location{
-					Group:  3,
-					Object: 4,
-				},
-				Parameters: KVPList{},
+				RequestID:      0,
+				TrackNamespace: []string{"tracknamespace"},
+				TrackName:      []byte("track"),
+				Parameters:     KVPList{},
 			},
 			err: nil,
+		},
+		{
+			data: append([]byte{0x00, 0x10}, append([]byte("tracknamespace"), 0x00)...),
+			expect: &TrackStatusMessage{
+				RequestID:      0,
+				TrackNamespace: []string{},
+				TrackName:      nil,
+				Parameters:     nil,
+			},
+			err: errLengthMismatch,
 		},
 	}
 	for i, tc := range cases {

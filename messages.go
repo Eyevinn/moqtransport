@@ -214,7 +214,8 @@ type SubscribeMessage struct {
 
 // SubscribeUpdateMessage represents a SUBSCRIBE_UPDATE message from the peer.
 type SubscribeUpdateMessage struct {
-	RequestID uint64
+	RequestID             uint64
+	SubscriptionRequestID uint64 // The Request ID of the original SUBSCRIBE message being updated
 
 	// Subscribe update specific fields
 	StartLocation      Location // New start position for the subscription

@@ -67,8 +67,8 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		m = &UnsubscribeMessage{}
 	case messageTypeSubscribeUpdate:
 		m = &SubscribeUpdateMessage{}
-	case messageTypeSubscribeDone:
-		m = &SubscribeDoneMessage{}
+	case messageTypePublishDone:
+		m = &PublishDoneMessage{}
 
 	case messageTypeFetch:
 		m = &FetchMessage{}
@@ -80,29 +80,29 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		m = &FetchCancelMessage{}
 
 	case messageTypeTrackStatus:
-		m = &TrackStatusRequestMessage{}
-	case messageTypeTrackStatusOk:
 		m = &TrackStatusMessage{}
+	case messageTypeTrackStatusOk:
+		m = &TrackStatusOkMessage{}
 
-	case messageTypeAnnounce:
-		m = &AnnounceMessage{}
-	case messageTypeAnnounceOk:
-		m = &AnnounceOkMessage{}
-	case messageTypeAnnounceError:
-		m = &AnnounceErrorMessage{}
-	case messageTypeUnannounce:
-		m = &UnannounceMessage{}
-	case messageTypeAnnounceCancel:
-		m = &AnnounceCancelMessage{}
+	case messageTypePublishNamespace:
+		m = &PublishNamespaceMessage{}
+	case messageTypePublishNamespaceOk:
+		m = &PublishNamespaceOkMessage{}
+	case messageTypePublishNamespaceError:
+		m = &PublishNamespaceErrorMessage{}
+	case messageTypePublishNamespaceDone:
+		m = &PublishNamespaceDoneMessage{}
+	case messageTypePublishNamespaceCancel:
+		m = &PublishNamespaceCancelMessage{}
 
 	case messageTypeSubscribeNamespace:
-		m = &SubscribeAnnouncesMessage{}
+		m = &SubscribeNamespaceMessage{}
 	case messageTypeSubscribeNamespaceOk:
-		m = &SubscribeAnnouncesOkMessage{}
+		m = &SubscribeNamespaceOkMessage{}
 	case messageTypeSubscribeNamespaceError:
-		m = &SubscribeAnnouncesErrorMessage{}
+		m = &SubscribeNamespaceErrorMessage{}
 	case messageTypeUnsubscribeNamespace:
-		m = &UnsubscribeAnnouncesMessage{}
+		m = &UnsubscribeNamespaceMessage{}
 	default:
 		return nil, fmt.Errorf("%w: %v", errInvalidMessageType, mt)
 	}

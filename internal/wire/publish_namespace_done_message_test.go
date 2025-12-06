@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestUnannounceMessageAppend(t *testing.T) {
+func TestPublishNamespaceDoneMessageAppend(t *testing.T) {
 	cases := []struct {
-		uam    UnannounceMessage
+		uam    PublishNamespaceDoneMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			uam: UnannounceMessage{
+			uam: PublishNamespaceDoneMessage{
 				TrackNamespace: []string{""},
 			},
 			buf: []byte{},
@@ -24,7 +24,7 @@ func TestUnannounceMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			uam: UnannounceMessage{
+			uam: PublishNamespaceDoneMessage{
 				TrackNamespace: []string{"tracknamespace"},
 			},
 			buf:    []byte{0x0a, 0x0b},
@@ -39,34 +39,34 @@ func TestUnannounceMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParseUnannounceMessage(t *testing.T) {
+func TestParsePublishNamespaceDoneMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *UnannounceMessage
+		expect *PublishNamespaceDoneMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &UnannounceMessage{},
+			expect: &PublishNamespaceDoneMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append([]byte{0x01, 0x0E}, "tracknamespace"...),
-			expect: &UnannounceMessage{
+			expect: &PublishNamespaceDoneMessage{
 				TrackNamespace: []string{"tracknamespace"},
 			},
 			err: nil,
 		},
 		{
 			data: append([]byte{0x01, 0x05}, "tracknamespace"...),
-			expect: &UnannounceMessage{
+			expect: &PublishNamespaceDoneMessage{
 				TrackNamespace: []string{"track"},
 			},
 			err: nil,
 		},
 		{
 			data: append([]byte{0x01, 0x0F}, "tracknamespace"...),
-			expect: &UnannounceMessage{
+			expect: &PublishNamespaceDoneMessage{
 				TrackNamespace: []string{},
 			},
 			err: errLengthMismatch,
@@ -74,7 +74,7 @@ func TestParseUnannounceMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &UnannounceMessage{}
+			res := &PublishNamespaceDoneMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			if tc.err != nil {
 				assert.Equal(t, tc.err, err)

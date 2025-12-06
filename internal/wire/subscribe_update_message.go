@@ -7,22 +7,25 @@ import (
 )
 
 type SubscribeUpdateMessage struct {
-	RequestID          uint64
-	StartLocation      Location
-	EndGroup           uint64
-	SubscriberPriority uint8
-	Forward            uint8
-	Parameters         KVPList
+	RequestID             uint64
+	SubscriptionRequestID uint64
+	StartLocation         Location
+	EndGroup              uint64
+	SubscriberPriority    uint8
+	Forward               uint8
+	Parameters            KVPList
 }
 
 func (m *SubscribeUpdateMessage) LogValue() slog.Value {
 	attrs := []slog.Attr{
 		slog.String("type", "subscribe_update"),
 		slog.Uint64("request_id", m.RequestID),
+		slog.Uint64("subscription_request_id", m.SubscriptionRequestID),
 		slog.Uint64("start_group", m.StartLocation.Group),
 		slog.Uint64("start_object", m.StartLocation.Object),
 		slog.Uint64("end_group", m.EndGroup),
-		slog.Any("subscriber_priority", m.SubscriberPriority),
+		slog.Uint64("subscriber_priority", uint64(m.SubscriberPriority)),
+		slog.Uint64("forward", uint64(m.Forward)),
 		slog.Uint64("number_of_parameters", uint64(len(m.Parameters))),
 	}
 	if len(m.Parameters) > 0 {
@@ -39,6 +42,7 @@ func (m SubscribeUpdateMessage) Type() controlMessageType {
 
 func (m *SubscribeUpdateMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
+	buf = quicvarint.Append(buf, m.SubscriptionRequestID)
 	buf = m.StartLocation.append(buf)
 	buf = quicvarint.Append(buf, m.EndGroup)
 	buf = append(buf, m.SubscriberPriority)
@@ -50,6 +54,12 @@ func (m *SubscribeUpdateMessage) parse(v Version, data []byte) (err error) {
 	var n int
 
 	m.RequestID, n, err = quicvarint.Parse(data)
+	if err != nil {
+		return err
+	}
+	data = data[n:]
+
+	m.SubscriptionRequestID, n, err = quicvarint.Parse(data)
 	if err != nil {
 		return err
 	}

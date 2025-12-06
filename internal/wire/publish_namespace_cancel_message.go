@@ -6,37 +6,37 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
-type AnnounceCancelMessage struct {
+type PublishNamespaceCancelMessage struct {
 	TrackNamespace Tuple
 	ErrorCode      uint64
 	ReasonPhrase   string
 }
 
-func (m *AnnounceCancelMessage) LogValue() slog.Value {
+func (m *PublishNamespaceCancelMessage) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("type", "announce_cancel"),
+		slog.String("type", "publish_namespace_cancel"),
 		slog.Any("track_namespace", m.TrackNamespace),
 		slog.Uint64("error_code", m.ErrorCode),
 		slog.String("reason", m.ReasonPhrase),
 	)
 }
 
-func (m AnnounceCancelMessage) GetTrackNamespace() string {
+func (m PublishNamespaceCancelMessage) GetTrackNamespace() string {
 	return m.TrackNamespace.String()
 }
 
-func (m AnnounceCancelMessage) Type() controlMessageType {
-	return messageTypeAnnounce
+func (m PublishNamespaceCancelMessage) Type() controlMessageType {
+	return messageTypePublishNamespaceCancel
 }
 
-func (m *AnnounceCancelMessage) Append(buf []byte) []byte {
+func (m *PublishNamespaceCancelMessage) Append(buf []byte) []byte {
 	buf = m.TrackNamespace.append(buf)
 	buf = quicvarint.Append(buf, m.ErrorCode)
 	buf = appendVarIntBytes(buf, []byte(m.ReasonPhrase))
 	return buf
 }
 
-func (m *AnnounceCancelMessage) parse(_ Version, data []byte) (err error) {
+func (m *PublishNamespaceCancelMessage) parse(_ Version, data []byte) (err error) {
 	var n int
 	m.TrackNamespace, n, err = parseTuple(data)
 	if err != nil {
