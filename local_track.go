@@ -110,11 +110,7 @@ func (p *localTrack) sendDatagram(o Object) error {
 			ExtensionHeadersLength: uint64(len(om.ObjectExtensionHeaders)),
 			ExtensionHeaders:       eth,
 			ObjectStatus:           uint64(om.ObjectStatus),
-			Payload: qlog.RawInfo{
-				Length:        uint64(len(om.ObjectPayload)),
-				PayloadLength: uint64(len(om.ObjectPayload)),
-				Data:          om.ObjectPayload,
-			},
+			Payload: wire.TruncatedRawInfo(om.ObjectPayload),
 		})
 	}
 	return p.conn.SendDatagram(buf)

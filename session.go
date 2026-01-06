@@ -216,11 +216,7 @@ func (s *Session) readDatagrams(ctx context.Context) error {
 				ExtensionHeadersLength: uint64(len(msg.ObjectExtensionHeaders)),
 				ExtensionHeaders:       eth,
 				ObjectStatus:           uint64(msg.ObjectStatus),
-				Payload: qlog.RawInfo{
-					Length:        uint64(len(msg.ObjectPayload)),
-					PayloadLength: uint64(len(msg.ObjectPayload)),
-					Data:          msg.ObjectPayload,
-				},
+				Payload:                wire.TruncatedRawInfo(msg.ObjectPayload),
 			})
 		}
 		if err := s.receiveDatagram(msg); err != nil {

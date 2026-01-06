@@ -179,11 +179,7 @@ func (p *ObjectStreamParser) parseSubgroupObject() (*ObjectMessage, error) {
 			ExtensionHeaders:       eth,
 			ObjectPayloadLength:    uint64(len(m.ObjectPayload)),
 			ObjectStatus:           uint64(m.ObjectStatus),
-			ObjectPayload: qlog.RawInfo{
-				Length:        uint64(len(m.ObjectPayload)),
-				PayloadLength: uint64(len(m.ObjectPayload)),
-				Data:          m.ObjectPayload,
-			},
+			ObjectPayload: TruncatedRawInfo(m.ObjectPayload),
 		})
 	}
 	return m, nil
@@ -225,11 +221,7 @@ func (p *ObjectStreamParser) parseFetchObject() (*ObjectMessage, error) {
 			ExtensionHeaders:       eth,
 			ObjectPayloadLength:    uint64(len(m.ObjectPayload)),
 			ObjectStatus:           uint64(m.ObjectStatus),
-			ObjectPayload: qlog.RawInfo{
-				Length:        uint64(len(m.ObjectPayload)),
-				PayloadLength: uint64(len(m.ObjectPayload)),
-				Data:          m.ObjectPayload,
-			},
+			ObjectPayload: TruncatedRawInfo(m.ObjectPayload),
 		})
 	}
 	return m, nil

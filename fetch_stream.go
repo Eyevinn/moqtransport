@@ -64,11 +64,7 @@ func (f *FetchStream) WriteObject(
 			ExtensionHeaders:       nil,
 			ObjectPayloadLength:    uint64(len(payload)),
 			ObjectStatus:           0,
-			ObjectPayload: qlog.RawInfo{
-				Length:        uint64(len(payload)),
-				PayloadLength: uint64(len(payload)),
-				Data:          payload,
-			},
+			ObjectPayload: wire.TruncatedRawInfo(payload),
 		})
 	}
 	return len(payload), nil
