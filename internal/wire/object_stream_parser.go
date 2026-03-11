@@ -16,18 +16,46 @@ import (
 type StreamType uint64
 
 const (
-	StreamTypeFetch                StreamType = 0x05
-	StreamTypeSubgroupZeroSIDNoExt StreamType = 0x08
-	StreamTypeSubgroupZeroSIDExt   StreamType = 0x09
-	StreamTypeSubgroupNoSIDNoExt   StreamType = 0x0a
-	StreamTypeSubgroupNoSIDExt     StreamType = 0x0b
-	StreamTypeSubgroupSIDNoExt     StreamType = 0x0c
-	StreamTypeSubgroupSIDExt       StreamType = 0x0d
+	StreamTypeFetch StreamType = 0x05
+
+	// Subgroup header types without End of Group (0x10-0x15)
+	StreamTypeSubgroupZeroSIDNoExt StreamType = 0x10
+	StreamTypeSubgroupZeroSIDExt   StreamType = 0x11
+	StreamTypeSubgroupNoSIDNoExt   StreamType = 0x12
+	StreamTypeSubgroupNoSIDExt     StreamType = 0x13
+	StreamTypeSubgroupSIDNoExt     StreamType = 0x14
+	StreamTypeSubgroupSIDExt       StreamType = 0x15
+
+	// Subgroup header types with End of Group (0x18-0x1D)
+	StreamTypeSubgroupZeroSIDNoExtEOG StreamType = 0x18
+	StreamTypeSubgroupZeroSIDExtEOG   StreamType = 0x19
+	StreamTypeSubgroupNoSIDNoExtEOG   StreamType = 0x1A
+	StreamTypeSubgroupNoSIDExtEOG     StreamType = 0x1B
+	StreamTypeSubgroupSIDNoExtEOG     StreamType = 0x1C
+	StreamTypeSubgroupSIDExtEOG       StreamType = 0x1D
 )
 
 var (
 	errInvalidStreamType = errors.New("invalid stream type")
 )
+
+func isSubgroupStreamType(st StreamType) bool {
+	return (st >= 0x10 && st <= 0x15) || (st >= 0x18 && st <= 0x1D)
+}
+
+func subgroupHasExplicitSID(st StreamType) bool {
+	return st == StreamTypeSubgroupSIDNoExt || st == StreamTypeSubgroupSIDExt ||
+		st == StreamTypeSubgroupSIDNoExtEOG || st == StreamTypeSubgroupSIDExtEOG
+}
+
+func subgroupSIDIsFirstObjectID(st StreamType) bool {
+	return st == StreamTypeSubgroupNoSIDNoExt || st == StreamTypeSubgroupNoSIDExt ||
+		st == StreamTypeSubgroupNoSIDNoExtEOG || st == StreamTypeSubgroupNoSIDExtEOG
+}
+
+func subgroupContainsEndOfGroup(st StreamType) bool {
+	return st >= 0x18 && st <= 0x1D
+}
 
 type ObjectStreamParser struct {
 	qlogger  *qlog.Logger
@@ -42,6 +70,7 @@ type ObjectStreamParser struct {
 	PublisherPriority uint8
 	GroupID           uint64
 	SubgroupID        uint64
+	EndOfGroup        bool
 }
 
 func (p *ObjectStreamParser) Type() StreamType {
@@ -83,7 +112,7 @@ func NewObjectStreamParser(r io.Reader, streamID uint64, qlogger *qlog.Logger) (
 			SubgroupID:        0,
 		}, nil
 	}
-	if streamType >= 0x08 && streamType <= 0x0d {
+	if isSubgroupStreamType(streamType) {
 		if qlogger != nil {
 			qlogger.Log(moqt.StreamTypeSetEvent{
 				Owner:      moqt.GetOwner(moqt.OwnerRemote),
@@ -95,9 +124,9 @@ func NewObjectStreamParser(r io.Reader, streamID uint64, qlogger *qlog.Logger) (
 		// objects
 		ext := streamType&0x01 > 0
 
-		// Only read subgroup ID from header if type is 0x0c or 0x0d. In all
-		// other cases, it is either zero or will be read from the first object.
-		sid := streamType == 0x0c || streamType == 0x0d
+		// Only read subgroup ID from header if type has explicit SID field.
+		// In all other cases, it is either zero or will be read from the first object.
+		sid := subgroupHasExplicitSID(streamType)
 
 		var shsm SubgroupHeaderMessage
 		if err := shsm.parse(br, sid); err != nil {
@@ -109,13 +138,14 @@ func NewObjectStreamParser(r io.Reader, streamID uint64, qlogger *qlog.Logger) (
 			reader:     br,
 			typ:        streamType,
 			identifier: shsm.TrackAlias,
-			// if stream type is 0x0a or 0x0b, we don't yet know the subgroup ID
+			// if subgroup ID comes from first object ID, we don't yet know it
 			// because it will only be read when the first object is parsed.
-			hasSubgroupID:     streamType != 0x0a && streamType != 0x0b,
+			hasSubgroupID:     !subgroupSIDIsFirstObjectID(streamType),
 			hasExtensions:     ext,
 			PublisherPriority: shsm.PublisherPriority,
 			GroupID:           shsm.GroupID,
 			SubgroupID:        shsm.SubgroupID,
+			EndOfGroup:        subgroupContainsEndOfGroup(streamType),
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: %v", errInvalidStreamType, st)
@@ -239,7 +269,7 @@ func (p *ObjectStreamParser) Parse() (*ObjectMessage, error) {
 	if p.typ == StreamTypeFetch {
 		return p.parseFetchObject()
 	}
-	if p.typ >= 0x08 && p.typ <= 0x0d {
+	if isSubgroupStreamType(p.typ) {
 		return p.parseSubgroupObject()
 	}
 	return nil, errInvalidStreamType

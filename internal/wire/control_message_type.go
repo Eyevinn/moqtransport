@@ -43,6 +43,14 @@ const (
 	messageTypePublishNamespaceDone   controlMessageType = 0x09
 	messageTypePublishNamespaceCancel controlMessageType = 0x0c
 
+	messageTypeAnnounce       = messageTypePublishNamespace
+	messageTypeAnnounceOk     = messageTypePublishNamespaceOk
+	messageTypeAnnounceError  = messageTypePublishNamespaceError
+	messageTypeAnnounceCancel = messageTypePublishNamespaceCancel
+	messageTypeUnannounce     = messageTypePublishNamespaceDone
+
+	messageTypeSubscribeDone = messageTypePublishDone
+
 	messageTypeSubscribeNamespace      controlMessageType = 0x11
 	messageTypeSubscribeNamespaceOk    controlMessageType = 0x12
 	messageTypeSubscribeNamespaceError controlMessageType = 0x13

@@ -9,10 +9,15 @@ type SubgroupHeaderMessage struct {
 	GroupID           uint64
 	SubgroupID        uint64
 	PublisherPriority uint8
+	EndOfGroup        bool
 }
 
 func (m *SubgroupHeaderMessage) Append(buf []byte) []byte {
-	buf = quicvarint.Append(buf, uint64(StreamTypeSubgroupSIDExt))
+	st := StreamTypeSubgroupSIDExt
+	if m.EndOfGroup {
+		st = StreamTypeSubgroupSIDExtEOG
+	}
+	buf = quicvarint.Append(buf, uint64(st))
 	buf = quicvarint.Append(buf, m.TrackAlias)
 	buf = quicvarint.Append(buf, m.GroupID)
 	buf = quicvarint.Append(buf, m.SubgroupID)

@@ -89,8 +89,8 @@ func (w *SubscribeResponseWriter) SendDatagram(o Object) error {
 	return w.localTrack.sendDatagram(o)
 }
 
-func (w *SubscribeResponseWriter) OpenSubgroup(groupID, subgroupID uint64, priority uint8) (*Subgroup, error) {
-	return w.localTrack.openSubgroup(groupID, subgroupID, priority)
+func (w *SubscribeResponseWriter) OpenSubgroup(groupID, subgroupID uint64, priority uint8, opts ...SubgroupOption) (*Subgroup, error) {
+	return w.localTrack.openSubgroup(groupID, subgroupID, priority, opts...)
 }
 
 func (w *SubscribeResponseWriter) CloseWithError(code uint64, reason string) error {

@@ -14,12 +14,13 @@ type Subgroup struct {
 	subgroupID uint64
 }
 
-func newSubgroup(stream SendStream, trackAlias, groupID, subgroupID uint64, publisherPriority uint8, qlogger *qlog.Logger) (*Subgroup, error) {
+func newSubgroup(stream SendStream, trackAlias, groupID, subgroupID uint64, publisherPriority uint8, endOfGroup bool, qlogger *qlog.Logger) (*Subgroup, error) {
 	shgm := &wire.SubgroupHeaderMessage{
 		TrackAlias:        trackAlias,
 		GroupID:           groupID,
 		SubgroupID:        subgroupID,
 		PublisherPriority: publisherPriority,
+		EndOfGroup:        endOfGroup,
 	}
 	buf := make([]byte, 0, 40)
 	buf = shgm.Append(buf)

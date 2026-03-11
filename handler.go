@@ -50,13 +50,29 @@ type ResponseWriter interface {
 	Reject(code uint64, reason string) error
 }
 
+// SubgroupOption configures optional subgroup properties.
+type SubgroupOption func(*subgroupOptions)
+
+type subgroupOptions struct {
+	endOfGroup bool
+}
+
+// WithEndOfGroup signals that this subgroup stream will contain the last
+// object in the group. Per draft-14, this sets the "Contains End of Group"
+// bit in the SUBGROUP_HEADER stream type.
+func WithEndOfGroup() SubgroupOption {
+	return func(o *subgroupOptions) {
+		o.endOfGroup = true
+	}
+}
+
 // Publisher is the interface implemented by SubscribeResponseWriters
 type Publisher interface {
 	// SendDatagram sends an object in a datagram.
 	SendDatagram(Object) error
 
 	// OpenSubgroup opens and returns a new subgroup.
-	OpenSubgroup(groupID, subgroupID uint64, priority uint8) (*Subgroup, error)
+	OpenSubgroup(groupID, subgroupID uint64, priority uint8, opts ...SubgroupOption) (*Subgroup, error)
 
 	// CloseWithError closes the track and sends SUBSCRIBE_DONE with code and
 	// reason.

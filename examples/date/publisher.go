@@ -16,10 +16,10 @@ func (p *publisher) SendDatagram(o moqtransport.Object) error {
 	return p.p.SendDatagram(o)
 }
 
-func (p *publisher) OpenSubgroup(groupID, subgroupID uint64, priority uint8) (*moqtransport.Subgroup, error) {
+func (p *publisher) OpenSubgroup(groupID, subgroupID uint64, priority uint8, opts ...moqtransport.SubgroupOption) (*moqtransport.Subgroup, error) {
 	log.Printf("sessionNr: %d, requestID: %d, groupID: %d, subgroupID: %v",
 		p.sessionID, p.requestID, groupID, subgroupID)
-	return p.p.OpenSubgroup(groupID, subgroupID, priority)
+	return p.p.OpenSubgroup(groupID, subgroupID, priority, opts...)
 }
 
 func (p *publisher) CloseWithError(code uint64, reason string) error {

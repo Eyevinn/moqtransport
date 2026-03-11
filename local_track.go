@@ -120,16 +120,20 @@ func (p *localTrack) sendDatagram(o Object) error {
 	return p.conn.SendDatagram(buf)
 }
 
-func (p *localTrack) openSubgroup(groupID, subgroupID uint64, priority uint8) (*Subgroup, error) {
+func (p *localTrack) openSubgroup(groupID, subgroupID uint64, priority uint8, opts ...SubgroupOption) (*Subgroup, error) {
 	if err := p.closed(); err != nil {
 		return nil, err
+	}
+	var o subgroupOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
 	stream, err := p.conn.OpenUniStream()
 	if err != nil {
 		return nil, err
 	}
 	p.subgroupCount++
-	return newSubgroup(stream, p.trackAlias, groupID, subgroupID, priority, p.qlogger)
+	return newSubgroup(stream, p.trackAlias, groupID, subgroupID, priority, o.endOfGroup, p.qlogger)
 }
 
 func (s *localTrack) close(code uint64, reason string) error {
