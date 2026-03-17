@@ -1,7 +1,7 @@
 package quicmoq
 
 import (
-	"github.com/mengelbart/moqtransport"
+	"github.com/Eyevinn/moqtransport"
 	"github.com/quic-go/quic-go"
 )
 

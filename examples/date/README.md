@@ -13,7 +13,7 @@ ones are provided.
 Download the example:
 
 ```shell
-git clone https://github.com/mengelbart/moqtransport.git
+git clone https://github.com/Eyevinn/moqtransport.git
 cd moqtransport/examples/date
 ```
 

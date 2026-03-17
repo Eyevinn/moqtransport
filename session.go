@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	"github.com/mengelbart/moqtransport/internal/slices"
-	"github.com/mengelbart/moqtransport/internal/wire"
+	"github.com/Eyevinn/moqtransport/internal/slices"
+	"github.com/Eyevinn/moqtransport/internal/wire"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 	"golang.org/x/sync/errgroup"

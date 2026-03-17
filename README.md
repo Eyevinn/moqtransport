@@ -1,6 +1,6 @@
 # Media over QUIC Transport (MoQT)
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/mengelbart/moqtransport.svg)](https://pkg.go.dev/github.com/mengelbart/moqtransport)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Eyevinn/moqtransport.svg)](https://pkg.go.dev/github.com/Eyevinn/moqtransport)
 
 `moqtransport` is a Go implementation of [Media over QUIC Transport](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) on top of [quic-go](https://github.com/quic-go/quic-go) and optionally [webtransport-go](https://github.com/quic-go/webtransport-go/).
 

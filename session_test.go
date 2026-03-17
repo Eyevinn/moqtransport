@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mengelbart/moqtransport/internal/wire"
+	"github.com/Eyevinn/moqtransport/internal/wire"
 	"github.com/mengelbart/qlog"
 	"github.com/stretchr/testify/assert"
 	gomock "go.uber.org/mock/gomock"

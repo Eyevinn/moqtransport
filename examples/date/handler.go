@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mengelbart/moqtransport"
-	"github.com/mengelbart/moqtransport/quicmoq"
-	"github.com/mengelbart/moqtransport/webtransportmoq"
+	"github.com/Eyevinn/moqtransport"
+	"github.com/Eyevinn/moqtransport/quicmoq"
+	"github.com/Eyevinn/moqtransport/webtransportmoq"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"

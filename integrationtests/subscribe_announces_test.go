@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mengelbart/moqtransport"
+	"github.com/Eyevinn/moqtransport"
 	"github.com/stretchr/testify/assert"
 )
 
