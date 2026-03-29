@@ -90,10 +90,11 @@ func (m *PublishMessage) parse(v Version, data []byte) (err error) {
 	if len(data) < 1 {
 		return errLengthMismatch
 	}
-	m.Forward = data[1]
+	m.Forward = data[0]
 	if m.Forward > 1 {
 		return errInvalidForwardFlag
 	}
+	data = data[1:]
 	m.Parameters = KVPList{}
 	return m.Parameters.parseNum(data)
 }

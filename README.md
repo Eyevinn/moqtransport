@@ -4,9 +4,11 @@
 
 `moqtransport` is a Go implementation of [Media over QUIC Transport](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) on top of [quic-go](https://github.com/quic-go/quic-go) and optionally [webtransport-go](https://github.com/quic-go/webtransport-go/).
 
+This is a fork of [github.com/mengelbart/moqtransport](https://github.com/mengelbart/moqtransport) due to slow progress on the upstream repository.
+
 ## Overview
 
-This library implements the Media over QUIC Transport (MoQT) protocol as defined in [draft-ietf-moq-transport-11](https://www.ietf.org/archive/id/draft-ietf-moq-transport-11.txt). MoQT is designed to operate over QUIC or WebTransport for efficient media delivery with a publish/subscribe model.
+This library implements the Media over QUIC Transport (MoQT) protocol as defined in [draft-ietf-moq-transport-14](https://www.ietf.org/archive/id/draft-ietf-moq-transport-14.txt). MoQT is designed to operate over QUIC or WebTransport for efficient media delivery with a publish/subscribe model.
 
 ### Implementation Status
 

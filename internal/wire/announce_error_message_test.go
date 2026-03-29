@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublishNamespaceErrorMessageAppend(t *testing.T) {
+func TestAnnounceErrorMessageAppend(t *testing.T) {
 	cases := []struct {
-		aem    PublishNamespaceErrorMessage
+		aem    AnnounceErrorMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			aem: PublishNamespaceErrorMessage{
+			aem: AnnounceErrorMessage{
 				RequestID:    0,
 				ErrorCode:    0,
 				ReasonPhrase: "",
@@ -26,7 +26,7 @@ func TestPublishNamespaceErrorMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			aem: PublishNamespaceErrorMessage{
+			aem: AnnounceErrorMessage{
 				RequestID:    1,
 				ErrorCode:    1,
 				ReasonPhrase: "reason",
@@ -35,7 +35,7 @@ func TestPublishNamespaceErrorMessageAppend(t *testing.T) {
 			expect: append([]byte{0x01, 0x01, 0x06}, "reason"...),
 		},
 		{
-			aem: PublishNamespaceErrorMessage{
+			aem: AnnounceErrorMessage{
 				RequestID:    1,
 				ErrorCode:    1,
 				ReasonPhrase: "reason",
@@ -52,20 +52,20 @@ func TestPublishNamespaceErrorMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParsePublishNamespaceErrorMessage(t *testing.T) {
+func TestParseAnnounceErrorMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *PublishNamespaceErrorMessage
+		expect *AnnounceErrorMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &PublishNamespaceErrorMessage{},
+			expect: &AnnounceErrorMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: []byte{0x01, 0x03, 0x03, 'e', 'r'},
-			expect: &PublishNamespaceErrorMessage{
+			expect: &AnnounceErrorMessage{
 				RequestID:    1,
 				ErrorCode:    3,
 				ReasonPhrase: "",
@@ -74,7 +74,7 @@ func TestParsePublishNamespaceErrorMessage(t *testing.T) {
 		},
 		{
 			data: append([]byte{0x00, 0x01, 0x0d}, "reason phrase"...),
-			expect: &PublishNamespaceErrorMessage{
+			expect: &AnnounceErrorMessage{
 				RequestID:    0,
 				ErrorCode:    1,
 				ReasonPhrase: "reason phrase",
@@ -84,7 +84,7 @@ func TestParsePublishNamespaceErrorMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &PublishNamespaceErrorMessage{}
+			res := &AnnounceErrorMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			if tc.err != nil {
 				assert.Equal(t, tc.err, err)

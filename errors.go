@@ -97,18 +97,18 @@ const (
 	ErrorCodeAnnouncementExpiredAuthToken ErrorCodeAnnounce = 0x12
 )
 
-// ErrorCodeSubscribeNamespace is a subscribe namespaces error code
-type ErrorCodeSubscribeNamespace uint64
+// ErrorCodeSubscribeAnnounces is a subscribe announces error code
+type ErrorCodeSubscribeAnnounces uint64
 
 const (
-	ErrorCodeSubscribeNamespaceInternal               ErrorCodeSubscribeNamespace = 0x00
-	ErrorCodeSubscribeNamespaceUnauthorized           ErrorCodeSubscribeNamespace = 0x01
-	ErrorCodeSubscribeNamespaceTimeout                ErrorCodeSubscribeNamespace = 0x02
-	ErrorCodeSubscribeNamespaceNotSupported           ErrorCodeSubscribeNamespace = 0x03
-	ErrorCodeSubscribeNamespaceNamespacePrefixUnknown ErrorCodeSubscribeNamespace = 0x04
-	ErrorCodeSubscribeNamespaceNamespacePrefixOverlap ErrorCodeSubscribeNamespace = 0x05
-	ErrorCodeSubscribeNamespaceMalformedAuthToken     ErrorCodeSubscribeNamespace = 0x10
-	ErrorCodeSubscribeNamespaceExpiredAuthToken       ErrorCodeSubscribeNamespace = 0x12
+	ErrorCodeSubscribeAnnouncesInternal               ErrorCodeSubscribeAnnounces = 0x00
+	ErrorCodeSubscribeAnnouncesUnauthorized           ErrorCodeSubscribeAnnounces = 0x01
+	ErrorCodeSubscribeAnnouncesTimeout                ErrorCodeSubscribeAnnounces = 0x02
+	ErrorCodeSubscribeAnnouncesNotSupported           ErrorCodeSubscribeAnnounces = 0x03
+	ErrorCodeSubscribeAnnouncesNamespacePrefixUnknown ErrorCodeSubscribeAnnounces = 0x04
+	ErrorCodeSubscribeAnnouncesNamespacePrefixOverlap ErrorCodeSubscribeAnnounces = 0x05
+	ErrorCodeSubscribeAnnouncesMalformedAuthToken     ErrorCodeSubscribeAnnounces = 0x10
+	ErrorCodeSubscribeAnnouncesExpiredAuthToken       ErrorCodeSubscribeAnnounces = 0x12
 )
 
 // ProtocolError is a MoQ protocol error

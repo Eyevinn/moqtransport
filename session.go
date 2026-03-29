@@ -777,8 +777,10 @@ func (s *Session) RequestTrackStatus(ctx context.Context, namespace []string, tr
 
 	s.outgoingTrackStatusRequests.add(tsr)
 	tsrm := &wire.TrackStatusMessage{
+		RequestID:      requestID,
 		TrackNamespace: namespace,
 		TrackName:      []byte(track),
+		FilterType:     wire.FilterTypeLatestObject,
 	}
 	if err := s.controlStream.write(tsrm); err != nil {
 		_, _ = s.outgoingTrackStatusRequests.delete(tsrm.RequestID)
@@ -794,9 +796,10 @@ func (s *Session) RequestTrackStatus(ctx context.Context, namespace []string, tr
 
 func (s *Session) sendTrackStatus(ts TrackStatus) error {
 	return s.controlStream.write(&wire.TrackStatusOkMessage{
-		StatusCode:      ts.StatusCode,
 		RequestID:       0,
-		LargestLocation: wire.Location{},
+		TrackAlias:      0,
+		ContentExists:   true,
+		LargestLocation: wire.Location{Group: ts.LastGroupID, Object: ts.LastObjectID},
 		Parameters:      wire.KVPList{},
 	})
 }
@@ -816,7 +819,7 @@ func (s *Session) Announce(ctx context.Context, namespace []string) error {
 		response:   make(chan error, 1),
 	}
 	s.outgoingAnnouncements.add(a)
-	am := &wire.PublishNamespaceMessage{
+	am := &wire.AnnounceMessage{
 		RequestID:      a.requestID,
 		TrackNamespace: a.namespace,
 		Parameters:     a.parameters,
@@ -837,7 +840,7 @@ func (s *Session) acceptAnnouncement(requestID uint64) error {
 	if _, err := s.incomingAnnouncements.confirmAndGet(requestID); err != nil {
 		return err
 	}
-	if err := s.controlStream.write(&wire.PublishNamespaceOkMessage{
+	if err := s.controlStream.write(&wire.AnnounceOkMessage{
 		RequestID: requestID,
 	}); err != nil {
 		return err
@@ -846,7 +849,7 @@ func (s *Session) acceptAnnouncement(requestID uint64) error {
 }
 
 func (s *Session) rejectAnnouncement(requestID uint64, c uint64, r string) error {
-	return s.controlStream.write(&wire.PublishNamespaceErrorMessage{
+	return s.controlStream.write(&wire.AnnounceErrorMessage{
 		RequestID:    requestID,
 		ErrorCode:    c,
 		ReasonPhrase: r,
@@ -857,7 +860,7 @@ func (s *Session) Unannounce(ctx context.Context, namespace []string) error {
 	if ok := s.outgoingAnnouncements.delete(namespace); ok {
 		return errUnknownAnnouncementNamespace
 	}
-	u := &wire.PublishNamespaceDoneMessage{
+	u := &wire.UnannounceMessage{
 		TrackNamespace: namespace,
 	}
 	return s.controlStream.write(u)
@@ -867,7 +870,7 @@ func (s *Session) AnnounceCancel(ctx context.Context, namespace []string, errorC
 	if !s.incomingAnnouncements.delete(namespace) {
 		return errUnknownAnnouncementNamespace
 	}
-	acm := &wire.PublishNamespaceCancelMessage{
+	acm := &wire.AnnounceCancelMessage{
 		TrackNamespace: namespace,
 		ErrorCode:      errorCode,
 		ReasonPhrase:   reason,
@@ -888,7 +891,7 @@ func (s *Session) SubscribeAnnouncements(ctx context.Context, prefix []string) e
 		response:  make(chan announcementSubscriptionResponse, 1),
 	}
 	s.pendingOutgointAnnouncementSubscriptions.add(as)
-	sam := &wire.SubscribeNamespaceMessage{
+	sam := &wire.SubscribeAnnouncesMessage{
 		RequestID:            as.requestID,
 		TrackNamespacePrefix: as.namespace,
 		Parameters:           wire.KVPList{},
@@ -906,13 +909,13 @@ func (s *Session) SubscribeAnnouncements(ctx context.Context, prefix []string) e
 }
 
 func (s *Session) acceptAnnouncementSubscription(requestID uint64) error {
-	return s.controlStream.write(&wire.SubscribeNamespaceOkMessage{
+	return s.controlStream.write(&wire.SubscribeAnnouncesOkMessage{
 		RequestID: requestID,
 	})
 }
 
 func (s *Session) rejectAnnouncementSubscription(requestID uint64, c uint64, r string) error {
-	return s.controlStream.write(&wire.SubscribeNamespaceErrorMessage{
+	return s.controlStream.write(&wire.SubscribeAnnouncesErrorMessage{
 		RequestID:    requestID,
 		ErrorCode:    c,
 		ReasonPhrase: r,
@@ -921,7 +924,7 @@ func (s *Session) rejectAnnouncementSubscription(requestID uint64, c uint64, r s
 
 func (s *Session) UnsubscribeAnnouncements(ctx context.Context, namespace []string) error {
 	s.pendingOutgointAnnouncementSubscriptions.delete(namespace)
-	uam := &wire.UnsubscribeNamespaceMessage{
+	uam := &wire.UnsubscribeAnnouncesMessage{
 		TrackNamespacePrefix: namespace,
 	}
 	return s.controlStream.write(uam)
@@ -974,24 +977,24 @@ func (s *Session) receive(msg wire.ControlMessage) error {
 		err = s.onTrackStatus(m)
 	case *wire.TrackStatusOkMessage:
 		err = s.onTrackStatusOk(m)
-	case *wire.PublishNamespaceMessage:
-		err = s.onPublishNamespace(m)
-	case *wire.PublishNamespaceOkMessage:
-		err = s.onPublishNamespaceOk(m)
-	case *wire.PublishNamespaceErrorMessage:
-		err = s.onPublishNamespaceError(m)
-	case *wire.PublishNamespaceDoneMessage:
-		err = s.onPublishNamespaceDone(m)
-	case *wire.PublishNamespaceCancelMessage:
-		err = s.onPublishNamespaceCancel(m)
-	case *wire.SubscribeNamespaceMessage:
-		err = s.onSubscribeNamespace(m)
-	case *wire.SubscribeNamespaceOkMessage:
-		err = s.onSubscribeNamespaceOk(m)
-	case *wire.SubscribeNamespaceErrorMessage:
-		err = s.onSubscribeNamespaceError(m)
-	case *wire.UnsubscribeNamespaceMessage:
-		s.onUnsubscribeNamespace(m)
+	case *wire.AnnounceMessage:
+		err = s.onAnnounce(m)
+	case *wire.AnnounceOkMessage:
+		err = s.onAnnounceOk(m)
+	case *wire.AnnounceErrorMessage:
+		err = s.onAnnounceError(m)
+	case *wire.UnannounceMessage:
+		err = s.onUnannounce(m)
+	case *wire.AnnounceCancelMessage:
+		err = s.onAnnounceCancel(m)
+	case *wire.SubscribeAnnouncesMessage:
+		err = s.onSubscribeAnnounces(m)
+	case *wire.SubscribeAnnouncesOkMessage:
+		err = s.onSubscribeAnnouncesOk(m)
+	case *wire.SubscribeAnnouncesErrorMessage:
+		err = s.onSubscribeAnnouncesError(m)
+	case *wire.UnsubscribeAnnouncesMessage:
+		s.onUnsubscribeAnnounces(m)
 	default:
 		err = errUnexpectedMessageType
 	}
@@ -1354,7 +1357,6 @@ func (s *Session) onTrackStatusOk(msg *wire.TrackStatusOkMessage) error {
 	case tsr.response <- &TrackStatus{
 		Namespace:    tsr.namespace,
 		Trackname:    tsr.trackname,
-		StatusCode:   msg.StatusCode,
 		LastGroupID:  msg.LargestLocation.Group,
 		LastObjectID: msg.LargestLocation.Object,
 	}:
@@ -1364,7 +1366,7 @@ func (s *Session) onTrackStatusOk(msg *wire.TrackStatusOkMessage) error {
 	return nil
 }
 
-func (s *Session) onPublishNamespace(msg *wire.PublishNamespaceMessage) error {
+func (s *Session) onAnnounce(msg *wire.AnnounceMessage) error {
 	if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
 		return errInvalidNamespaceLength
 	}
@@ -1392,7 +1394,7 @@ func (s *Session) onPublishNamespace(msg *wire.PublishNamespaceMessage) error {
 	return nil
 }
 
-func (s *Session) onPublishNamespaceOk(msg *wire.PublishNamespaceOkMessage) error {
+func (s *Session) onAnnounceOk(msg *wire.AnnounceOkMessage) error {
 	announcement, err := s.outgoingAnnouncements.confirmAndGet(msg.RequestID)
 	if err != nil {
 		return errUnknownAnnouncement
@@ -1405,7 +1407,7 @@ func (s *Session) onPublishNamespaceOk(msg *wire.PublishNamespaceOkMessage) erro
 	return nil
 }
 
-func (s *Session) onPublishNamespaceError(msg *wire.PublishNamespaceErrorMessage) error {
+func (s *Session) onAnnounceError(msg *wire.AnnounceErrorMessage) error {
 	announcement, ok := s.outgoingAnnouncements.reject(msg.RequestID)
 	if !ok {
 		return errUnknownAnnouncement
@@ -1421,7 +1423,7 @@ func (s *Session) onPublishNamespaceError(msg *wire.PublishNamespaceErrorMessage
 	return nil
 }
 
-func (s *Session) onPublishNamespaceDone(msg *wire.PublishNamespaceDoneMessage) error {
+func (s *Session) onUnannounce(msg *wire.UnannounceMessage) error {
 	if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
 		return errInvalidNamespaceLength
 	}
@@ -1435,7 +1437,7 @@ func (s *Session) onPublishNamespaceDone(msg *wire.PublishNamespaceDoneMessage) 
 	return nil
 }
 
-func (s *Session) onPublishNamespaceCancel(msg *wire.PublishNamespaceCancelMessage) error {
+func (s *Session) onAnnounceCancel(msg *wire.AnnounceCancelMessage) error {
 	if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
 		return errInvalidNamespaceLength
 	}
@@ -1448,7 +1450,7 @@ func (s *Session) onPublishNamespaceCancel(msg *wire.PublishNamespaceCancelMessa
 	return nil
 }
 
-func (s *Session) onSubscribeNamespace(msg *wire.SubscribeNamespaceMessage) error {
+func (s *Session) onSubscribeAnnounces(msg *wire.SubscribeAnnouncesMessage) error {
 	s.pendingIncomingAnnouncementSubscriptions.add(&announcementSubscription{
 		requestID: msg.RequestID,
 		namespace: msg.TrackNamespacePrefix,
@@ -1470,7 +1472,7 @@ func (s *Session) onSubscribeNamespace(msg *wire.SubscribeNamespaceMessage) erro
 	return nil
 }
 
-func (s *Session) onSubscribeNamespaceOk(msg *wire.SubscribeNamespaceOkMessage) error {
+func (s *Session) onSubscribeAnnouncesOk(msg *wire.SubscribeAnnouncesOkMessage) error {
 	as, ok := s.pendingOutgointAnnouncementSubscriptions.deleteByID(msg.RequestID)
 	if !ok {
 		return errUnknownSubscribeAnnouncesPrefix
@@ -1485,7 +1487,7 @@ func (s *Session) onSubscribeNamespaceOk(msg *wire.SubscribeNamespaceOkMessage) 
 	return nil
 }
 
-func (s *Session) onSubscribeNamespaceError(msg *wire.SubscribeNamespaceErrorMessage) error {
+func (s *Session) onSubscribeAnnouncesError(msg *wire.SubscribeAnnouncesErrorMessage) error {
 	as, ok := s.pendingOutgointAnnouncementSubscriptions.deleteByID(msg.RequestID)
 	if !ok {
 		return errUnknownSubscribeAnnouncesPrefix
@@ -1503,7 +1505,7 @@ func (s *Session) onSubscribeNamespaceError(msg *wire.SubscribeNamespaceErrorMes
 	return nil
 }
 
-func (s *Session) onUnsubscribeNamespace(msg *wire.UnsubscribeNamespaceMessage) {
+func (s *Session) onUnsubscribeAnnounces(msg *wire.UnsubscribeAnnouncesMessage) {
 	s.Handler.Handle(nil, &Message{
 		Method:    MessageUnsubscribeAnnounces,
 		Namespace: msg.TrackNamespacePrefix,

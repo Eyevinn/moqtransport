@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublishNamespaceCancelMessageAppend(t *testing.T) {
+func TestAnnounceCancelMessageAppend(t *testing.T) {
 	cases := []struct {
-		aom    PublishNamespaceCancelMessage
+		aom    AnnounceCancelMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			aom: PublishNamespaceCancelMessage{
+			aom: AnnounceCancelMessage{
 				TrackNamespace: []string{""},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -26,7 +26,7 @@ func TestPublishNamespaceCancelMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			aom: PublishNamespaceCancelMessage{
+			aom: AnnounceCancelMessage{
 				TrackNamespace: []string{"tracknamespace"},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -48,22 +48,22 @@ func TestPublishNamespaceCancelMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParsePublishNamespaceCancelMessage(t *testing.T) {
+func TestParseAnnounceCancelMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *PublishNamespaceCancelMessage
+		expect *AnnounceCancelMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &PublishNamespaceCancelMessage{},
+			expect: &AnnounceCancelMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append(
 				[]byte{0x01, 0x0E}, append([]byte("tracknamespace"), 0x00, 0x00)...,
 			),
-			expect: &PublishNamespaceCancelMessage{
+			expect: &AnnounceCancelMessage{
 				TrackNamespace: []string{"tracknamespace"},
 				ErrorCode:      0,
 				ReasonPhrase:   "",
@@ -72,7 +72,7 @@ func TestParsePublishNamespaceCancelMessage(t *testing.T) {
 		},
 		{
 			data: append([]byte{0x01, 0x05}, append([]byte("track"), []byte{0x01, 0x06, 'r', 'e', 'a', 's', 'o', 'n', 'p', 'h', 'r', 'a', 's', 'e'}...)...),
-			expect: &PublishNamespaceCancelMessage{
+			expect: &AnnounceCancelMessage{
 				TrackNamespace: []string{"track"},
 				ErrorCode:      1,
 				ReasonPhrase:   "reason",
@@ -81,7 +81,7 @@ func TestParsePublishNamespaceCancelMessage(t *testing.T) {
 		},
 		{
 			data: append([]byte{0x01, 0x0F}, "tracknamespace"...),
-			expect: &PublishNamespaceCancelMessage{
+			expect: &AnnounceCancelMessage{
 				TrackNamespace: []string{},
 			},
 			err: errLengthMismatch,
@@ -89,7 +89,7 @@ func TestParsePublishNamespaceCancelMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &PublishNamespaceCancelMessage{}
+			res := &AnnounceCancelMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {

@@ -6,15 +6,15 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
-type PublishNamespaceMessage struct {
+type AnnounceMessage struct {
 	RequestID      uint64
 	TrackNamespace Tuple
 	Parameters     KVPList
 }
 
-func (m *PublishNamespaceMessage) LogValue() slog.Value {
+func (m *AnnounceMessage) LogValue() slog.Value {
 	attrs := []slog.Attr{
-		slog.String("type", "publish_namespace"),
+		slog.String("type", "announce"),
 		slog.Any("track_namespace", m.TrackNamespace),
 		slog.Uint64("number_of_parameters", uint64(len(m.Parameters))),
 	}
@@ -26,21 +26,21 @@ func (m *PublishNamespaceMessage) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func (m PublishNamespaceMessage) GetTrackNamespace() string {
+func (m AnnounceMessage) GetTrackNamespace() string {
 	return m.TrackNamespace.String()
 }
 
-func (m PublishNamespaceMessage) Type() controlMessageType {
-	return messageTypePublishNamespace
+func (m AnnounceMessage) Type() controlMessageType {
+	return messageTypeAnnounce
 }
 
-func (m *PublishNamespaceMessage) Append(buf []byte) []byte {
+func (m *AnnounceMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = m.TrackNamespace.append(buf)
 	return m.Parameters.appendNum(buf)
 }
 
-func (m *PublishNamespaceMessage) parse(_ Version, data []byte) (err error) {
+func (m *AnnounceMessage) parse(_ Version, data []byte) (err error) {
 	var n int
 	m.RequestID, n, err = quicvarint.Parse(data)
 	if err != nil {

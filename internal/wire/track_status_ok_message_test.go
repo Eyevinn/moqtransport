@@ -4,45 +4,66 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestTrackStatusOkMessageAppend(t *testing.T) {
 	cases := []struct {
-		tsm    TrackStatusOkMessage
+		msg    TrackStatusOkMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			tsm: TrackStatusOkMessage{
-				RequestID:  0,
-				StatusCode: 0,
-				LargestLocation: Location{
-					Group:  0,
-					Object: 0,
-				},
+			msg: TrackStatusOkMessage{
+				RequestID:     0,
+				TrackAlias:    0,
+				Expires:       0,
+				GroupOrder:    0,
+				ContentExists: false,
+				Parameters:    KVPList{},
 			},
-			buf:    []byte{},
-			expect: []byte{0x00, 0x00, 0x00, 0x00, 0x00},
+			buf: []byte{},
+			expect: []byte{
+				0x00, // RequestID
+				0x00, // TrackAlias
+				0x00, // Expires
+				0x00, // GroupOrder
+				0x00, // ContentExists = false
+				0x00, // Number of Parameters
+			},
 		},
 		{
-			tsm: TrackStatusOkMessage{
-				RequestID:  1,
-				StatusCode: 2,
+			msg: TrackStatusOkMessage{
+				RequestID:     1,
+				TrackAlias:    0,
+				Expires:       1000,
+				GroupOrder:    1,
+				ContentExists: true,
 				LargestLocation: Location{
-					Group:  1,
-					Object: 2,
+					Group:  3,
+					Object: 4,
 				},
 				Parameters: KVPList{},
 			},
-			buf:    []byte{0x0a, 0x0b},
-			expect: []byte{0x0a, 0x0b, 0x01, 0x02, 0x01, 0x02, 0x00},
+			buf: []byte{0x0a, 0x0b},
+			expect: []byte{
+				0x0a, 0x0b,
+				0x01,       // RequestID
+				0x00,       // TrackAlias
+				0x43, 0xe8, // Expires (1000 as varint)
+				0x01, // GroupOrder
+				0x01, // ContentExists = true
+				0x03, // LargestLocation.Group
+				0x04, // LargestLocation.Object
+				0x00, // Number of Parameters
+			},
 		},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := tc.tsm.Append(tc.buf)
+			res := tc.msg.Append(tc.buf)
 			assert.Equal(t, tc.expect, res)
 		})
 	}
@@ -65,10 +86,22 @@ func TestParseTrackStatusOkMessage(t *testing.T) {
 			err:    io.EOF,
 		},
 		{
-			data: []byte{0x01, 0x02, 0x03, 0x04, 0x00},
+			data: []byte{
+				0x01, // RequestID
+				0x00, // TrackAlias
+				0x40, 0x64, // Expires (100ms as 2-byte varint)
+				0x01, // GroupOrder
+				0x01, // ContentExists = true
+				0x03, // LargestLocation.Group
+				0x04, // LargestLocation.Object
+				0x00, // Number of Parameters
+			},
 			expect: &TrackStatusOkMessage{
-				RequestID:  1,
-				StatusCode: 2,
+				RequestID:     1,
+				TrackAlias:    0,
+				Expires:       100 * time.Millisecond,
+				GroupOrder:    1,
+				ContentExists: true,
 				LargestLocation: Location{
 					Group:  3,
 					Object: 4,
