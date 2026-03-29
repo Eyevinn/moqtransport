@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublishNamespaceDoneMessageAppend(t *testing.T) {
+func TestUnannounceMessageAppend(t *testing.T) {
 	cases := []struct {
-		uam    PublishNamespaceDoneMessage
+		uam    UnannounceMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			uam: PublishNamespaceDoneMessage{
+			uam: UnannounceMessage{
 				TrackNamespace: []string{""},
 			},
 			buf: []byte{},
@@ -24,7 +24,7 @@ func TestPublishNamespaceDoneMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			uam: PublishNamespaceDoneMessage{
+			uam: UnannounceMessage{
 				TrackNamespace: []string{"tracknamespace"},
 			},
 			buf:    []byte{0x0a, 0x0b},
@@ -39,34 +39,34 @@ func TestPublishNamespaceDoneMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParsePublishNamespaceDoneMessage(t *testing.T) {
+func TestParseUnannounceMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *PublishNamespaceDoneMessage
+		expect *UnannounceMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &PublishNamespaceDoneMessage{},
+			expect: &UnannounceMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append([]byte{0x01, 0x0E}, "tracknamespace"...),
-			expect: &PublishNamespaceDoneMessage{
+			expect: &UnannounceMessage{
 				TrackNamespace: []string{"tracknamespace"},
 			},
 			err: nil,
 		},
 		{
 			data: append([]byte{0x01, 0x05}, "tracknamespace"...),
-			expect: &PublishNamespaceDoneMessage{
+			expect: &UnannounceMessage{
 				TrackNamespace: []string{"track"},
 			},
 			err: nil,
 		},
 		{
 			data: append([]byte{0x01, 0x0F}, "tracknamespace"...),
-			expect: &PublishNamespaceDoneMessage{
+			expect: &UnannounceMessage{
 				TrackNamespace: []string{},
 			},
 			err: errLengthMismatch,
@@ -74,7 +74,7 @@ func TestParsePublishNamespaceDoneMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &PublishNamespaceDoneMessage{}
+			res := &UnannounceMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			if tc.err != nil {
 				assert.Equal(t, tc.err, err)

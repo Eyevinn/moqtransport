@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublishNamespaceOkMessageAppend(t *testing.T) {
+func TestAnnounceOkMessageAppend(t *testing.T) {
 	cases := []struct {
-		aom    PublishNamespaceOkMessage
+		aom    AnnounceOkMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			aom: PublishNamespaceOkMessage{
+			aom: AnnounceOkMessage{
 				RequestID: 1,
 			},
 			buf: []byte{},
@@ -24,7 +24,7 @@ func TestPublishNamespaceOkMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			aom: PublishNamespaceOkMessage{
+			aom: AnnounceOkMessage{
 				RequestID: 1,
 			},
 			buf:    []byte{0x0a, 0x0b},
@@ -39,34 +39,34 @@ func TestPublishNamespaceOkMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParsePublishNamespaceOkMessage(t *testing.T) {
+func TestParseAnnounceOkMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *PublishNamespaceOkMessage
+		expect *AnnounceOkMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &PublishNamespaceOkMessage{},
+			expect: &AnnounceOkMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: []byte{0x01},
-			expect: &PublishNamespaceOkMessage{
+			expect: &AnnounceOkMessage{
 				RequestID: 1,
 			},
 			err: nil,
 		},
 		{
 			data: []byte{0x01},
-			expect: &PublishNamespaceOkMessage{
+			expect: &AnnounceOkMessage{
 				RequestID: 1,
 			},
 			err: nil,
 		},
 		{
 			data: []byte{},
-			expect: &PublishNamespaceOkMessage{
+			expect: &AnnounceOkMessage{
 				RequestID: 0,
 			},
 			err: io.EOF,
@@ -74,7 +74,7 @@ func TestParsePublishNamespaceOkMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &PublishNamespaceOkMessage{}
+			res := &AnnounceOkMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {

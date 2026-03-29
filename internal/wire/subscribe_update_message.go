@@ -82,7 +82,7 @@ func (m *SubscribeUpdateMessage) parse(v Version, data []byte) (err error) {
 	}
 	m.SubscriberPriority = data[0]
 	m.Forward = data[1]
-	if m.Forward > 2 {
+	if m.Forward > 1 {
 		return errInvalidForwardFlag
 	}
 	data = data[2:]

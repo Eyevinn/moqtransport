@@ -8,14 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublishNamespaceMessageAppend(t *testing.T) {
+func TestAnnounceMessageAppend(t *testing.T) {
 	cases := []struct {
-		am     PublishNamespaceMessage
+		am     AnnounceMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			am: PublishNamespaceMessage{
+			am: AnnounceMessage{
 				RequestID:      0,
 				TrackNamespace: []string{""},
 				Parameters:     KVPList{},
@@ -26,7 +26,7 @@ func TestPublishNamespaceMessageAppend(t *testing.T) {
 			},
 		},
 		{
-			am: PublishNamespaceMessage{
+			am: AnnounceMessage{
 				RequestID:      1,
 				TrackNamespace: []string{"tracknamespace"},
 				Parameters:     KVPList{},
@@ -43,25 +43,25 @@ func TestPublishNamespaceMessageAppend(t *testing.T) {
 	}
 }
 
-func TestParsePublishNamespaceMessage(t *testing.T) {
+func TestParseAnnounceMessage(t *testing.T) {
 	cases := []struct {
 		data   []byte
-		expect *PublishNamespaceMessage
+		expect *AnnounceMessage
 		err    error
 	}{
 		{
 			data:   nil,
-			expect: &PublishNamespaceMessage{},
+			expect: &AnnounceMessage{},
 			err:    io.EOF,
 		},
 		{
 			data:   []byte{},
-			expect: &PublishNamespaceMessage{},
+			expect: &AnnounceMessage{},
 			err:    io.EOF,
 		},
 		{
 			data: append(append([]byte{0x00, 0x01, 0x09}, "trackname"...), 0x00),
-			expect: &PublishNamespaceMessage{
+			expect: &AnnounceMessage{
 				RequestID:      0,
 				TrackNamespace: []string{"trackname"},
 				Parameters:     KVPList{},
@@ -71,7 +71,7 @@ func TestParsePublishNamespaceMessage(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := &PublishNamespaceMessage{}
+			res := &AnnounceMessage{}
 			err := res.parse(CurrentVersion, tc.data)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {

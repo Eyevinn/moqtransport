@@ -371,12 +371,12 @@ func TestSession(t *testing.T) {
 		s := newSession(conn, cs, nil)
 		s.handshakeDone.Store(true)
 
-		cs.EXPECT().write(&wire.PublishNamespaceMessage{
+		cs.EXPECT().write(&wire.AnnounceMessage{
 			RequestID:      0,
 			TrackNamespace: []string{"namespace"},
 			Parameters:     wire.KVPList{},
 		}).DoAndReturn(func(_ wire.ControlMessage) error {
-			err := s.receive(&wire.PublishNamespaceOkMessage{
+			err := s.receive(&wire.AnnounceOkMessage{
 				RequestID: 0,
 			})
 			assert.NoError(t, err)
@@ -404,10 +404,10 @@ func TestSession(t *testing.T) {
 		}).DoAndReturn(func(rw ResponseWriter, req *Message) {
 			assert.NoError(t, rw.Accept())
 		})
-		cs.EXPECT().write(&wire.PublishNamespaceOkMessage{
+		cs.EXPECT().write(&wire.AnnounceOkMessage{
 			RequestID: 2,
 		})
-		err := s.receive(&wire.PublishNamespaceMessage{
+		err := s.receive(&wire.AnnounceMessage{
 			RequestID:      2,
 			TrackNamespace: []string{"namespace"},
 			Parameters:     wire.KVPList{},

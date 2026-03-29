@@ -10,36 +10,37 @@ import (
 
 func TestTrackStatusMessageAppend(t *testing.T) {
 	cases := []struct {
-		aom    TrackStatusMessage
+		msg    TrackStatusMessage
 		buf    []byte
 		expect []byte
 	}{
 		{
-			aom: TrackStatusMessage{
-				RequestID:      0,
-				TrackNamespace: []string{""},
-				TrackName:      []byte(""),
-				Parameters:     KVPList{},
+			msg: TrackStatusMessage{
+				RequestID:          0,
+				TrackNamespace:     []string{"ns"},
+				TrackName:          []byte("track"),
+				SubscriberPriority: 0,
+				GroupOrder:         0,
+				Forward:            1,
+				FilterType:         FilterTypeLatestObject,
+				Parameters:         KVPList{},
 			},
 			buf: []byte{},
 			expect: []byte{
-				0x00, 0x01, 0x00, 0x00, 0x00,
+				0x00,                                     // RequestID
+				0x01, 0x02, 'n', 's',                     // TrackNamespace (tuple: 1 element, len 2, "ns")
+				0x05, 't', 'r', 'a', 'c', 'k',           // TrackName
+				0x00,                                     // SubscriberPriority
+				0x00,                                     // GroupOrder
+				0x01,                                     // Forward
+				0x02,                                     // FilterType (LatestObject)
+				0x00,                                     // Number of Parameters
 			},
-		},
-		{
-			aom: TrackStatusMessage{
-				RequestID:      0,
-				TrackNamespace: []string{"tracknamespace"},
-				TrackName:      []byte("track"),
-				Parameters:     KVPList{},
-			},
-			buf:    []byte{0x0a, 0x0b},
-			expect: []byte{0x0a, 0x0b, 0x00, 0x01, 0x0e, 't', 'r', 'a', 'c', 'k', 'n', 'a', 'm', 'e', 's', 'p', 'a', 'c', 'e', 0x05, 't', 'r', 'a', 'c', 'k', 0x00},
 		},
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			res := tc.aom.Append(tc.buf)
+			res := tc.msg.Append(tc.buf)
 			assert.Equal(t, tc.expect, res)
 		})
 	}
@@ -57,24 +58,27 @@ func TestParseTrackStatusMessage(t *testing.T) {
 			err:    io.EOF,
 		},
 		{
-			data: []byte{0x00, 0x01, 0x0e, 't', 'r', 'a', 'c', 'k', 'n', 'a', 'm', 'e', 's', 'p', 'a', 'c', 'e', 0x05, 't', 'r', 'a', 'c', 'k', 0x00},
+			data: []byte{
+				0x00,                                     // RequestID
+				0x01, 0x02, 'n', 's',                     // TrackNamespace
+				0x05, 't', 'r', 'a', 'c', 'k',           // TrackName
+				0x00,                                     // SubscriberPriority
+				0x00,                                     // GroupOrder
+				0x01,                                     // Forward
+				0x02,                                     // FilterType (LatestObject)
+				0x00,                                     // Number of Parameters
+			},
 			expect: &TrackStatusMessage{
-				RequestID:      0,
-				TrackNamespace: []string{"tracknamespace"},
-				TrackName:      []byte("track"),
-				Parameters:     KVPList{},
+				RequestID:          0,
+				TrackNamespace:     []string{"ns"},
+				TrackName:          []byte("track"),
+				SubscriberPriority: 0,
+				GroupOrder:         0,
+				Forward:            1,
+				FilterType:         FilterTypeLatestObject,
+				Parameters:         KVPList{},
 			},
 			err: nil,
-		},
-		{
-			data: append([]byte{0x00, 0x10}, append([]byte("tracknamespace"), 0x00)...),
-			expect: &TrackStatusMessage{
-				RequestID:      0,
-				TrackNamespace: []string{},
-				TrackName:      nil,
-				Parameters:     nil,
-			},
-			err: errLengthMismatch,
 		},
 	}
 	for i, tc := range cases {

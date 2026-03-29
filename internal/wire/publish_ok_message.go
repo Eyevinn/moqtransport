@@ -22,7 +22,7 @@ func (m *PublishOkMessage) LogValue() slog.Value {
 }
 
 func (m *PublishOkMessage) Type() controlMessageType {
-	return messageTypePublish
+	return messageTypePublishOk
 }
 
 func (m *PublishOkMessage) Append(buf []byte) []byte {

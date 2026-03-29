@@ -37,24 +37,16 @@ const (
 	messageTypeTrackStatusOk    controlMessageType = 0x0e
 	messageTypeTrackStatusError controlMessageType = 0x0f
 
-	messageTypePublishNamespace       controlMessageType = 0x06
-	messageTypePublishNamespaceOk     controlMessageType = 0x07
-	messageTypePublishNamespaceError  controlMessageType = 0x08
-	messageTypePublishNamespaceDone   controlMessageType = 0x09
-	messageTypePublishNamespaceCancel controlMessageType = 0x0c
+	messageTypeAnnounce       controlMessageType = 0x06
+	messageTypeAnnounceOk     controlMessageType = 0x07
+	messageTypeAnnounceError  controlMessageType = 0x08
+	messageTypeUnannounce     controlMessageType = 0x09
+	messageTypeAnnounceCancel controlMessageType = 0x0c
 
-	messageTypeAnnounce       = messageTypePublishNamespace
-	messageTypeAnnounceOk     = messageTypePublishNamespaceOk
-	messageTypeAnnounceError  = messageTypePublishNamespaceError
-	messageTypeAnnounceCancel = messageTypePublishNamespaceCancel
-	messageTypeUnannounce     = messageTypePublishNamespaceDone
-
-	messageTypeSubscribeDone = messageTypePublishDone
-
-	messageTypeSubscribeNamespace      controlMessageType = 0x11
-	messageTypeSubscribeNamespaceOk    controlMessageType = 0x12
-	messageTypeSubscribeNamespaceError controlMessageType = 0x13
-	messageTypeUnsubscribeNamespace    controlMessageType = 0x14
+	messageTypeSubscribeAnnounces      controlMessageType = 0x11
+	messageTypeSubscribeAnnouncesOk    controlMessageType = 0x12
+	messageTypeSubscribeAnnouncesError controlMessageType = 0x13
+	messageTypeUnsubscribeAnnounces    controlMessageType = 0x14
 )
 
 func (mt controlMessageType) String() string {
@@ -108,25 +100,25 @@ func (mt controlMessageType) String() string {
 	case messageTypeTrackStatusError:
 		return "TrackStatusError"
 
-	case messageTypePublishNamespace:
-		return "PublishNamespace"
-	case messageTypePublishNamespaceOk:
-		return "PublishNamespaceOk"
-	case messageTypePublishNamespaceError:
-		return "PublishNamespaceError"
-	case messageTypePublishNamespaceDone:
-		return "PublishNamespaceDone"
-	case messageTypePublishNamespaceCancel:
-		return "PublishNamespaceCancel"
+	case messageTypeAnnounce:
+		return "Announce"
+	case messageTypeAnnounceOk:
+		return "AnnounceOk"
+	case messageTypeAnnounceError:
+		return "AnnounceError"
+	case messageTypeUnannounce:
+		return "Unannounce"
+	case messageTypeAnnounceCancel:
+		return "AnnounceCancel"
 
-	case messageTypeSubscribeNamespace:
-		return "SubscribeNamespace"
-	case messageTypeSubscribeNamespaceOk:
-		return "SubscribeNamespaceOk"
-	case messageTypeSubscribeNamespaceError:
-		return "SubscribeNamespaceError"
-	case messageTypeUnsubscribeNamespace:
-		return "UnsubscribeNamespace"
+	case messageTypeSubscribeAnnounces:
+		return "SubscribeAnnounces"
+	case messageTypeSubscribeAnnouncesOk:
+		return "SubscribeAnnouncesOk"
+	case messageTypeSubscribeAnnouncesError:
+		return "SubscribeAnnouncesError"
+	case messageTypeUnsubscribeAnnounces:
+		return "UnsubscribeAnnounces"
 	}
 	return "unknown message type"
 }
