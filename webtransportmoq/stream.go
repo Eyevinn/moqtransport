@@ -37,6 +37,7 @@ func (s *Stream) Stop(code uint32) {
 }
 
 // StreamID implements moqtransport.Stream.
+// webtransport-go v0.10+ no longer exposes the stream ID.
 func (s *Stream) StreamID() uint64 {
-	return uint64(s.stream.StreamID())
+	return 0
 }

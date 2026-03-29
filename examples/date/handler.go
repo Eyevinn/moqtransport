@@ -62,7 +62,7 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 		return err
 	}
 	wt := webtransport.Server{
-		H3: http3.Server{
+		H3: &http3.Server{
 			Addr:      h.addr,
 			TLSConfig: h.tlsConfig,
 		},

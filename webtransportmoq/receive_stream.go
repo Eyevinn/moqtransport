@@ -21,7 +21,8 @@ func (r *ReceiveStream) Stop(code uint32) {
 	r.stream.CancelRead(webtransport.StreamErrorCode(code))
 }
 
-// StreamID implements moqtransport.ReceiveStream
+// StreamID implements moqtransport.ReceiveStream.
+// webtransport-go v0.10+ no longer exposes the stream ID.
 func (r *ReceiveStream) StreamID() uint64 {
-	return uint64(r.stream.StreamID())
+	return 0
 }
