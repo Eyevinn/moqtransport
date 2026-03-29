@@ -26,7 +26,8 @@ func (s *SendStream) Close() error {
 	return s.stream.Close()
 }
 
-// StreamID implements moqtransport.SendStream
+// StreamID implements moqtransport.SendStream.
+// webtransport-go v0.10+ no longer exposes the stream ID.
 func (s *SendStream) StreamID() uint64 {
-	return uint64(s.stream.StreamID())
+	return 0
 }
