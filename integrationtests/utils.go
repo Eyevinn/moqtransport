@@ -53,14 +53,32 @@ func setup(t *testing.T, sConn, cConn *quic.Conn, handler moqtransport.Handler) 
 	return setupWithHandlers(t, sConn, cConn, handler, nil)
 }
 
+type sessionOptions struct {
+	handler             moqtransport.Handler
+	subscribeHandler    moqtransport.SubscribeHandler
+	fetchHandler        moqtransport.FetchHandler
+}
+
 func setupWithHandlers(t *testing.T, sConn, cConn *quic.Conn, handler moqtransport.Handler, subscribeHandler moqtransport.SubscribeHandler) (
 	serverSession *moqtransport.Session,
 	clientSession *moqtransport.Session,
 	cancel func(),
 ) {
+	return setupWithAllHandlers(t, sConn, cConn, sessionOptions{
+		handler:          handler,
+		subscribeHandler: subscribeHandler,
+	})
+}
+
+func setupWithAllHandlers(t *testing.T, sConn, cConn *quic.Conn, opts sessionOptions) (
+	serverSession *moqtransport.Session,
+	clientSession *moqtransport.Session,
+	cancel func(),
+) {
 	serverSession = &moqtransport.Session{
-		Handler:             handler,
-		SubscribeHandler:    subscribeHandler,
+		Handler:             opts.handler,
+		SubscribeHandler:    opts.subscribeHandler,
+		FetchHandler:        opts.fetchHandler,
 		InitialMaxRequestID: 100,
 		Qlogger:             nil,
 	}
@@ -73,8 +91,9 @@ func setupWithHandlers(t *testing.T, sConn, cConn *quic.Conn, handler moqtranspo
 	}()
 
 	clientSession = &moqtransport.Session{
-		Handler:             handler,
-		SubscribeHandler:    subscribeHandler,
+		Handler:             opts.handler,
+		SubscribeHandler:    opts.subscribeHandler,
+		FetchHandler:        opts.fetchHandler,
 		InitialMaxRequestID: 100,
 		Qlogger:             nil,
 	}
