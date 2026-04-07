@@ -51,6 +51,11 @@ type Session struct {
 	// SubscribeHandler is Handler for Subscribe messages
 	SubscribeHandler SubscribeHandler
 
+	// FetchHandler is Handler for Fetch messages. When set, it receives
+	// typed FetchMessage with all fields including joining fetch info.
+	// Falls back to the generic Handler if not set.
+	FetchHandler FetchHandler
+
 	// SubscribeUpdateHandler is Handler for SubscribeUpdate messages
 	SubscribeUpdateHandler SubscribeUpdateHandler
 
@@ -446,6 +451,78 @@ func WithUpdateParameters(parameters KVPList) SubscribeUpdateOption {
 	}
 }
 
+// FetchOption is a functional option for configuring FETCH requests.
+type FetchOption func(*fetchConfig)
+
+type fetchConfig struct {
+	FetchOptions
+	fetchType          FetchType
+	joiningSubscribeID uint64
+	joiningStart       uint64
+}
+
+// WithFetchPriority sets the delivery priority for the fetch.
+// Priority range is 0-255, with lower values indicating higher priority.
+// Default is 0.
+func WithFetchPriority(priority uint8) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.SubscriberPriority = priority
+	}
+}
+
+// WithFetchGroupOrder sets the group ordering preference for the fetch.
+// Default is GroupOrderNone (use publisher's order).
+func WithFetchGroupOrder(groupOrder GroupOrder) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.GroupOrder = groupOrder
+	}
+}
+
+// WithFetchStartLocation sets the start position for a standalone fetch.
+func WithFetchStartLocation(location Location) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.StartLocation = location
+	}
+}
+
+// WithFetchEndLocation sets the end position for a standalone fetch.
+// An Object value of 0 means the entire group is requested.
+func WithFetchEndLocation(location Location) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.EndLocation = location
+	}
+}
+
+// WithFetchParameters sets additional key-value parameters for the fetch.
+func WithFetchParameters(parameters KVPList) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.Parameters = parameters
+	}
+}
+
+// WithJoiningFetchRelative configures a relative joining fetch.
+// The fetch is joined with an existing subscription identified by subscribeID.
+// precedingGroupOffset specifies how many groups before the subscription's
+// largest group the fetch should start from.
+func WithJoiningFetchRelative(subscribeID uint64, precedingGroupOffset uint64) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.fetchType = FetchTypeRelativeJoining
+		cfg.joiningSubscribeID = subscribeID
+		cfg.joiningStart = precedingGroupOffset
+	}
+}
+
+// WithJoiningFetchAbsolute configures an absolute joining fetch.
+// The fetch is joined with an existing subscription identified by subscribeID.
+// startGroup specifies the absolute group ID where the fetch should start.
+func WithJoiningFetchAbsolute(subscribeID uint64, startGroup uint64) FetchOption {
+	return func(cfg *fetchConfig) {
+		cfg.fetchType = FetchTypeAbsoluteJoining
+		cfg.joiningSubscribeID = subscribeID
+		cfg.joiningStart = startGroup
+	}
+}
+
 // Session message senders
 
 func (s *Session) sendClientSetup() error {
@@ -665,13 +742,31 @@ func (s *Session) subscriptionDone(id, code, count uint64, reason string) error 
 	})
 }
 
-// Fetch fetches track in namespace from the peer. It blocks until a response
+// Fetch fetches a track from the peer. It blocks until a response
 // from the peer was received or ctx is cancelled.
+//
+// For a standalone fetch, provide namespace and track name.
+// For a joining fetch, use WithJoiningFetchRelative or WithJoiningFetchAbsolute
+// options — namespace and track are derived from the associated subscription
+// by the publisher, so they can be empty.
 func (s *Session) Fetch(
 	ctx context.Context,
 	namespace []string,
 	track string,
+	options ...FetchOption,
 ) (*RemoteTrack, error) {
+	cfg := &fetchConfig{
+		FetchOptions: FetchOptions{
+			SubscriberPriority: 0,
+			GroupOrder:         GroupOrderNone,
+			Parameters:         KVPList{},
+		},
+		fetchType: FetchTypeStandalone,
+	}
+	for _, opt := range options {
+		opt(cfg)
+	}
+
 	requestID, err := s.getRequestID()
 	if err != nil {
 		return nil, err
@@ -695,18 +790,18 @@ func (s *Session) Fetch(
 	}
 	cm := &wire.FetchMessage{
 		RequestID:          requestID,
-		SubscriberPriority: 0,
-		GroupOrder:         0,
-		FetchType:          wire.FetchTypeStandalone,
+		SubscriberPriority: cfg.SubscriberPriority,
+		GroupOrder:         uint8(cfg.GroupOrder),
+		FetchType:          cfg.fetchType,
 		TrackNamespace:     namespace,
 		TrackName:          []byte(track),
-		StartGroup:         0,
-		StartObject:        0,
-		EndGroup:           0,
-		EndObject:          0,
-		JoiningSubscribeID: 0,
-		JoiningStart:       0,
-		Parameters:         wire.KVPList{},
+		StartGroup:         cfg.StartLocation.Group,
+		StartObject:        cfg.StartLocation.Object,
+		EndGroup:           cfg.EndLocation.Group,
+		EndObject:          cfg.EndLocation.Object,
+		JoiningSubscribeID: cfg.joiningSubscribeID,
+		JoiningStart:       cfg.joiningStart,
+		Parameters:         cfg.Parameters.ToWire(),
 	}
 	if err = s.controlStream.write(cm); err != nil {
 		_, _ = s.remoteTracks.reject(requestID)
@@ -1248,33 +1343,50 @@ func (s *Session) onPublishDone(msg *wire.PublishDoneMessage) error {
 }
 
 func (s *Session) onFetch(msg *wire.FetchMessage) error {
-	if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
-		return errInvalidNamespaceLength
+	if msg.FetchType == wire.FetchTypeStandalone {
+		if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
+			return errInvalidNamespaceLength
+		}
 	}
-	m := &Message{
-		Method:        MessageFetch,
-		Namespace:     msg.TrackNamespace,
-		Track:         string(msg.TrackName),
-		RequestID:     msg.RequestID,
-		Authorization: "",
-		NewSessionURI: "",
-		ErrorCode:     0,
-		ReasonPhrase:  "",
-	}
-	lt := newLocalTrack(s.conn, m.RequestID, s.trackAliases.next(), nil, s.Qlogger)
+
+	lt := newLocalTrack(s.conn, msg.RequestID, s.trackAliases.next(), nil, s.Qlogger)
 	if err := s.addLocalTrack(lt); err != nil {
-		if rejectErr := s.rejectFetch(m.RequestID, uint64(ErrorCodeSubscribeInternal), ""); rejectErr != nil {
+		if rejectErr := s.rejectFetch(msg.RequestID, uint64(ErrorCodeSubscribeInternal), ""); rejectErr != nil {
 			return rejectErr
 		}
 		return err
 	}
-	frw := &fetchResponseWriter{
-		id:         m.RequestID,
+	frw := &FetchResponseWriter{
+		id:         msg.RequestID,
 		session:    s,
 		localTrack: lt,
 		handled:    false,
 	}
-	s.Handler.Handle(frw, m)
+
+	if s.FetchHandler != nil {
+		fm := &FetchMessage{
+			RequestID:          msg.RequestID,
+			FetchType:          msg.FetchType,
+			Namespace:          msg.TrackNamespace,
+			Track:              string(msg.TrackName),
+			StartLocation:      Location{Group: msg.StartGroup, Object: msg.StartObject},
+			EndLocation:        Location{Group: msg.EndGroup, Object: msg.EndObject},
+			JoiningSubscribeID: msg.JoiningSubscribeID,
+			JoiningStart:       msg.JoiningStart,
+			SubscriberPriority: msg.SubscriberPriority,
+			GroupOrder:         GroupOrder(msg.GroupOrder),
+			Parameters:         FromWire(msg.Parameters),
+		}
+		s.FetchHandler.HandleFetch(frw, fm)
+	} else {
+		m := &Message{
+			Method:    MessageFetch,
+			Namespace: msg.TrackNamespace,
+			Track:     string(msg.TrackName),
+			RequestID: msg.RequestID,
+		}
+		s.Handler.Handle(frw, m)
+	}
 	if !frw.handled {
 		return frw.Reject(0, "unhandled fetch")
 	}

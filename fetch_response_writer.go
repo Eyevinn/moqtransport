@@ -1,6 +1,7 @@
 package moqtransport
 
-type fetchResponseWriter struct {
+// FetchResponseWriter implements ResponseWriter and FetchPublisher for FETCH messages.
+type FetchResponseWriter struct {
 	id         uint64
 	session    *Session
 	localTrack *localTrack
@@ -8,17 +9,18 @@ type fetchResponseWriter struct {
 }
 
 // Accept implements ResponseWriter.
-func (f *fetchResponseWriter) Accept() error {
+func (f *FetchResponseWriter) Accept() error {
 	f.handled = true
 	return f.session.acceptFetch(f.id)
 }
 
 // Reject implements ResponseWriter.
-func (f *fetchResponseWriter) Reject(code uint64, reason string) error {
+func (f *FetchResponseWriter) Reject(code uint64, reason string) error {
 	f.handled = true
 	return f.session.rejectFetch(f.id, code, reason)
 }
 
-func (f *fetchResponseWriter) FetchStream() (*FetchStream, error) {
+// FetchStream returns a FetchStream for writing objects.
+func (f *FetchResponseWriter) FetchStream() (*FetchStream, error) {
 	return f.localTrack.getFetchStream()
 }

@@ -123,6 +123,21 @@ func (f SubscribeHandlerFunc) HandleSubscribe(rw *SubscribeResponseWriter, m *Su
 	f(rw, m)
 }
 
+// FetchHandler is the handler interface for handling FETCH messages.
+// When set on a Session, it receives typed FetchMessage with all fields
+// including joining fetch information.
+type FetchHandler interface {
+	HandleFetch(*FetchResponseWriter, *FetchMessage)
+}
+
+// FetchHandlerFunc is a type that implements FetchHandler.
+type FetchHandlerFunc func(*FetchResponseWriter, *FetchMessage)
+
+// HandleFetch implements FetchHandler.
+func (f FetchHandlerFunc) HandleFetch(rw *FetchResponseWriter, m *FetchMessage) {
+	f(rw, m)
+}
+
 // SubscribeUpdateHandler is the handler interface for handling SUBSCRIBE_UPDATE messages.
 type SubscribeUpdateHandler interface {
 	HandleSubscribeUpdate(*SubscribeUpdateMessage)

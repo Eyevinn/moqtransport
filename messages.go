@@ -224,3 +224,58 @@ type SubscribeUpdateMessage struct {
 	Forward            uint8    // Updated forward preference: 0=No, 1=Yes
 	Parameters         KVPList  // Updated parameter list
 }
+
+// FetchType represents the type of a FETCH request.
+type FetchType = uint64
+
+const (
+	// FetchTypeStandalone is a fetch performed independently of any Subscribe.
+	FetchTypeStandalone FetchType = wire.FetchTypeStandalone
+
+	// FetchTypeRelativeJoining is a fetch joined with a Subscribe using a relative offset.
+	FetchTypeRelativeJoining FetchType = wire.FetchTypeRelativeJoining
+
+	// FetchTypeAbsoluteJoining is a fetch joined with a Subscribe using an absolute start location.
+	FetchTypeAbsoluteJoining FetchType = wire.FetchTypeAbsoluteJoining
+)
+
+// FetchOptions contains options for fetching a track.
+type FetchOptions struct {
+	// SubscriberPriority indicates the delivery priority (0-255, lower is higher priority).
+	SubscriberPriority uint8
+
+	// GroupOrder indicates group ordering preference:
+	// 0 = None, 1 = Ascending, 2 = Descending
+	GroupOrder GroupOrder
+
+	// StartLocation specifies the start position (for standalone fetch).
+	StartLocation Location
+
+	// EndLocation specifies the end position (for standalone fetch).
+	// Object value of 0 means the entire group is requested.
+	EndLocation Location
+
+	// Parameters contains key-value parameters for the fetch.
+	Parameters KVPList
+}
+
+// FetchMessage represents a FETCH message received from a subscriber.
+type FetchMessage struct {
+	RequestID uint64
+	FetchType FetchType
+
+	// Standalone fetch fields (set when FetchType == FetchTypeStandalone)
+	Namespace     []string
+	Track         string
+	StartLocation Location
+	EndLocation   Location
+
+	// Joining fetch fields (set when FetchType is RelativeJoining or AbsoluteJoining)
+	JoiningSubscribeID uint64
+	JoiningStart       uint64
+
+	// Common fields
+	SubscriberPriority uint8
+	GroupOrder         GroupOrder
+	Parameters         KVPList
+}
