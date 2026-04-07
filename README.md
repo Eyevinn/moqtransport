@@ -13,7 +13,7 @@ This library implements the Media over QUIC Transport (MoQT) protocol as defined
 ### Implementation Status
 
 This code, as well as the specification, is work in progress.
-The implementation currently covers most aspects of the MoQT specification (draft-11), including:
+The implementation currently covers most aspects of the MoQT specification (draft-14), including:
 
  Session establishment and initialization  
  Control message encoding and handling  
