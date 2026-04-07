@@ -81,7 +81,7 @@ func (t *RemoteTrack) Parameters() KVPList {
 }
 
 // UpdateSubscription updates the subscription parameters for this track.
-// No response is expected according to draft-11 specification.
+// No response is expected according to draft-14 specification.
 func (t *RemoteTrack) UpdateSubscription(ctx context.Context, options ...SubscribeUpdateOption) error {
 	if t.updateFunc == nil {
 		return errors.New("update function not available")

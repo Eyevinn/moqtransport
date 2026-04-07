@@ -482,7 +482,7 @@ func (s *Session) sendClientSetup() error {
 //
 // Use WithAuthorizationToken(auth) to add authorization.
 // Note: auth should not be a simple string, but a structured object containing
-// an optional session-specific alias (draft-11 8.2.1.1)
+// an optional session-specific alias (draft-14 8.2.1.1)
 func (s *Session) Subscribe(
 	ctx context.Context,
 	namespace []string,
@@ -548,7 +548,7 @@ func (s *Session) Subscribe(
 }
 
 // UpdateSubscription sends a SUBSCRIBE_UPDATE message to update an existing subscription.
-// No response is expected according to draft-11 specification.
+// No response is expected according to draft-14 specification.
 //
 // Default behavior when no options are provided:
 //   - StartLocation: Location{Group: 0, Object: 0}
