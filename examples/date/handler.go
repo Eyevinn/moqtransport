@@ -77,7 +77,9 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		h.handle(webtransportmoq.NewServer(session))
+		if err := h.handle(webtransportmoq.NewServer(session)); err != nil {
+			log.Printf("failed to handle webtransport session: %v", err)
+		}
 	})
 	for {
 		conn, err := listener.Accept(ctx)
@@ -85,10 +87,18 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 			return err
 		}
 		if conn.ConnectionState().TLS.NegotiatedProtocol == "h3" {
-			go wt.ServeQUICConn(conn)
+			go func() {
+				if err := wt.ServeQUICConn(conn); err != nil {
+					log.Printf("failed to serve QUIC conn: %v", err)
+				}
+			}()
 		}
 		if conn.ConnectionState().TLS.NegotiatedProtocol == "moq-00" {
-			go h.handle(quicmoq.NewServer(conn))
+			go func() {
+				if err := h.handle(quicmoq.NewServer(conn)); err != nil {
+					log.Printf("failed to handle QUIC session: %v", err)
+				}
+			}()
 		}
 	}
 }
@@ -99,12 +109,12 @@ func (h *moqHandler) getHandler(sessionID uint64) moqtransport.Handler {
 		case moqtransport.MessageAnnounce:
 			if !h.subscribe {
 				log.Printf("sessionNr: %d got unexpected announcement: %v", sessionID, r.Namespace)
-				w.Reject(0, "date doesn't take announcements")
+				_ = w.Reject(0, "date doesn't take announcements")
 				return
 			}
 			if !tupleEqual(r.Namespace, h.namespace) {
 				log.Printf("got unexpected announcement namespace: %v, expected %v", r.Namespace, h.namespace)
-				w.Reject(0, "non-matching namespace")
+				_ = w.Reject(0, "non-matching namespace")
 				return
 			}
 			err := w.Accept()
@@ -120,12 +130,12 @@ func (h *moqHandler) getSubscribeHandler(sessionID uint64) moqtransport.Subscrib
 	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
 		if !h.publish {
 			log.Printf("sessionNr: %d got unexpected subscribe request: %v", sessionID, m.Namespace)
-			w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
+			_ = w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
 			return
 		}
 		if !tupleEqual(m.Namespace, h.namespace) || m.Track != h.trackname {
 			log.Printf("got unexpected subscribe namespace/track: %v/%v, expected %v/%v", m.Namespace, m.Track, h.namespace, h.trackname)
-			w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
+			_ = w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
 			return
 		}
 		largestGroup := h.largestGroup.Load()
@@ -215,14 +225,14 @@ func (h *moqHandler) setupDateTrack() {
 			sg, err := p.OpenSubgroup(uint64(groupID), 0, 0)
 			if err != nil {
 				log.Printf("failed to open new subgroup: %v", err)
-				p.CloseWithError(uint64(moqtransport.ErrorCodeSubscribeDoneSubscriptionEnded), "")
+				_ = p.CloseWithError(uint64(moqtransport.ErrorCodeSubscribeDoneSubscriptionEnded), "")
 				delete(h.publishers, p)
 				continue
 			}
 			if _, err := sg.WriteObject(0, []byte(fmt.Sprintf("%v", ts))); err != nil {
 				log.Printf("failed to write time to subgroup: %v", err)
 			}
-			sg.Close()
+			_ = sg.Close()
 			// if err := p.SendDatagram(moqtransport.Object{
 			// 	GroupID:    uint64(groupID),
 			// 	SubGroupID: 0,
