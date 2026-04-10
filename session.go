@@ -183,7 +183,7 @@ func (s *Session) readStreams(ctx context.Context) error {
 				return
 			}
 			s.logger.Debug("parsed object stream header")
-			if err := s.handleUniStream(parser); err != nil {
+			if err := s.handleUniStream(ctx, parser); err != nil {
 				return
 			}
 		}()
@@ -234,11 +234,11 @@ func (s *Session) readDatagrams(ctx context.Context) error {
 	}
 }
 
-func (s *Session) handleUniStream(parser objectMessageParser) error {
+func (s *Session) handleUniStream(ctx context.Context, parser objectMessageParser) error {
 	if parser.Type() == wire.StreamTypeFetch {
 		return s.readFetchStream(parser)
 	}
-	return s.readSubgroupStream(parser)
+	return s.readSubgroupStream(ctx, parser)
 }
 
 func (s *Session) readFetchStream(parser objectMessageParser) error {
@@ -250,9 +250,9 @@ func (s *Session) readFetchStream(parser objectMessageParser) error {
 	return rt.readFetchStream(parser)
 }
 
-func (s *Session) readSubgroupStream(parser objectMessageParser) error {
+func (s *Session) readSubgroupStream(ctx context.Context, parser objectMessageParser) error {
 	s.logger.Info("reading subgroup")
-	rt, ok := s.remoteTrackByTrackAlias(parser.Identifier())
+	rt, ok := s.remoteTracks.awaitTrackAlias(ctx, parser.Identifier())
 	if !ok {
 		return errUnknownRequestID
 	}

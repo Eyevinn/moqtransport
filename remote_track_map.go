@@ -1,6 +1,7 @@
 package moqtransport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -26,6 +27,7 @@ type remoteTrackMap struct {
 	pending               map[uint64]*RemoteTrack
 	open                  map[uint64]*RemoteTrack
 	trackAliasToRequestID map[uint64]uint64
+	aliasAdded            chan struct{} // closed and replaced when a new alias is added
 }
 
 func newRemoteTrackMap() *remoteTrackMap {
@@ -35,6 +37,7 @@ func newRemoteTrackMap() *remoteTrackMap {
 		pending:               map[uint64]*RemoteTrack{},
 		open:                  map[uint64]*RemoteTrack{},
 		trackAliasToRequestID: map[uint64]uint64{},
+		aliasAdded:            make(chan struct{}),
 	}
 }
 
@@ -86,6 +89,8 @@ func (m *remoteTrackMap) setAlias(id, alias uint64) error {
 		return errDuplicateTrackAliasBug
 	}
 	m.trackAliasToRequestID[alias] = id
+	close(m.aliasAdded)
+	m.aliasAdded = make(chan struct{})
 	return nil
 }
 
@@ -120,4 +125,24 @@ func (m *remoteTrackMap) findByTrackAlias(alias uint64) (*RemoteTrack, bool) {
 		return nil, false
 	}
 	return m.findByRequestID(id)
+}
+
+// awaitTrackAlias waits for the given track alias to be registered via setAlias.
+// This handles the race where a subgroup stream arrives before SUBSCRIBE_OK
+// has been processed on the control stream.
+func (m *remoteTrackMap) awaitTrackAlias(ctx context.Context, alias uint64) (*RemoteTrack, bool) {
+	for {
+		m.lock.Lock()
+		id, ok := m.trackAliasToRequestID[alias]
+		ch := m.aliasAdded
+		m.lock.Unlock()
+		if ok {
+			return m.findByRequestID(id)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-ch:
+		}
+	}
 }
