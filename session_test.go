@@ -415,8 +415,7 @@ func TestSession(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("receives_objects_before_susbcribe_ok", func(t *testing.T) {
-		t.Skip()
+	t.Run("receives_objects_before_subscribe_ok", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		cs := NewMockControlMessageStream(ctrl)
 		mh := NewMockHandler(ctrl)
@@ -426,7 +425,7 @@ func TestSession(t *testing.T) {
 		conn.EXPECT().Protocol().AnyTimes().Return(ProtocolQUIC)
 
 		mp.EXPECT().Type().Return(wire.StreamTypeSubgroupSIDExt).AnyTimes()
-		mp.EXPECT().Identifier().Return(uint64(0)).AnyTimes()
+		mp.EXPECT().Identifier().Return(uint64(2)).AnyTimes()
 
 		mp.EXPECT().Messages().Return(func(yield func(*wire.ObjectMessage, error) bool) {
 			if !yield(&wire.ObjectMessage{
@@ -437,7 +436,7 @@ func TestSession(t *testing.T) {
 				PublisherPriority:      0,
 				ObjectExtensionHeaders: wire.KVPList{},
 				ObjectStatus:           0,
-				ObjectPayload:          []byte{},
+				ObjectPayload:          []byte("test-data"),
 			}, nil) {
 				assert.Fail(t, "yield returned false")
 				return
@@ -469,7 +468,16 @@ func TestSession(t *testing.T) {
 				},
 			},
 		}).DoAndReturn(func(_ wire.ControlMessage) error {
-			assert.NoError(t, s.handleUniStream(mp))
+			// Start reading the subgroup stream in a goroutine (simulates
+			// readStreams receiving the data stream before readControlStream
+			// has processed SUBSCRIBE_OK).
+			ctx := context.Background()
+			done := make(chan error, 1)
+			go func() {
+				done <- s.handleUniStream(ctx, mp)
+			}()
+			// Process SUBSCRIBE_OK after the stream handler has started,
+			// exercising the race that awaitTrackAlias must handle.
 			assert.NoError(t, s.onSubscribeOk(&wire.SubscribeOkMessage{
 				RequestID:       0,
 				TrackAlias:      2,
@@ -479,6 +487,7 @@ func TestSession(t *testing.T) {
 				LargestLocation: wire.Location{},
 				Parameters:      wire.KVPList{},
 			}))
+			assert.NoError(t, <-done)
 			return nil
 		})
 		rt, err := s.Subscribe(context.Background(), []string{"namespace"}, "trackname", WithAuthorizationToken("auth"))
