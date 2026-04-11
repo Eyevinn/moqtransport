@@ -952,7 +952,7 @@ func (s *Session) rejectAnnouncement(requestID uint64, c uint64, r string) error
 }
 
 func (s *Session) Unannounce(ctx context.Context, namespace []string) error {
-	if ok := s.outgoingAnnouncements.delete(namespace); ok {
+	if ok := s.outgoingAnnouncements.delete(namespace); !ok {
 		return errUnknownAnnouncementNamespace
 	}
 	u := &wire.UnannounceMessage{
