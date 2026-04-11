@@ -7,6 +7,7 @@ import (
 )
 
 type AnnounceMessage struct {
+	WireVersion    Version
 	RequestID      uint64
 	TrackNamespace Tuple
 	Parameters     KVPList
@@ -37,10 +38,10 @@ func (m AnnounceMessage) Type() controlMessageType {
 func (m *AnnounceMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = m.TrackNamespace.append(buf)
-	return m.Parameters.appendNum(buf)
+	return m.Parameters.AppendNumVersioned(m.WireVersion, buf)
 }
 
-func (m *AnnounceMessage) parse(_ Version, data []byte) (err error) {
+func (m *AnnounceMessage) parse(v Version, data []byte) (err error) {
 	var n int
 	m.RequestID, n, err = quicvarint.Parse(data)
 	if err != nil {
@@ -55,5 +56,5 @@ func (m *AnnounceMessage) parse(_ Version, data []byte) (err error) {
 	data = data[n:]
 
 	m.Parameters = KVPList{}
-	return m.Parameters.parseNum(data)
+	return m.Parameters.ParseNumVersioned(v, data)
 }
