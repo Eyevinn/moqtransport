@@ -107,3 +107,7 @@ func (c *connection) Protocol() moqtransport.Protocol {
 func (c *connection) Perspective() moqtransport.Perspective {
 	return c.perspective
 }
+
+func (c *connection) NegotiatedALPN() string {
+	return c.connection.ConnectionState().TLS.NegotiatedProtocol
+}

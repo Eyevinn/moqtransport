@@ -93,7 +93,7 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 				}
 			}()
 		}
-		if conn.ConnectionState().TLS.NegotiatedProtocol == "moq-00" {
+		if alpn := conn.ConnectionState().TLS.NegotiatedProtocol; alpn == "moq-00" || alpn == "moqt-16" {
 			go func() {
 				if err := h.handle(quicmoq.NewServer(conn)); err != nil {
 					log.Printf("failed to handle QUIC session: %v", err)

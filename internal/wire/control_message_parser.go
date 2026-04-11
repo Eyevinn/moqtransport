@@ -9,12 +9,14 @@ import (
 )
 
 type ControlMessageParser struct {
-	reader messageReader
+	reader  messageReader
+	version Version
 }
 
-func NewControlMessageParser(r io.Reader) *ControlMessageParser {
+func NewControlMessageParser(r io.Reader, version Version) *ControlMessageParser {
 	return &ControlMessageParser{
-		reader: bufio.NewReader(r),
+		reader:  bufio.NewReader(r),
+		version: version,
 	}
 }
 
@@ -115,6 +117,6 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 	default:
 		return nil, fmt.Errorf("%w: %v", errInvalidMessageType, mt)
 	}
-	err = m.parse(CurrentVersion, msg)
+	err = m.parse(p.version, msg)
 	return m, err
 }

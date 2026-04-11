@@ -113,6 +113,7 @@ func TestSession(t *testing.T) {
 		s := newSession(conn, cs, nil)
 
 		cs.EXPECT().write(&wire.ServerSetupMessage{
+			WireVersion:     wire.CurrentVersion,
 			SelectedVersion: wire.CurrentVersion,
 			SetupParameters: wire.KVPList{
 				wire.KeyValuePair{
@@ -144,6 +145,7 @@ func TestSession(t *testing.T) {
 		s := newSession(conn, cs, nil)
 
 		cs.EXPECT().write(&wire.ServerSetupMessage{
+			WireVersion:     wire.CurrentVersion,
 			SelectedVersion: wire.CurrentVersion,
 			SetupParameters: wire.KVPList{
 				wire.KeyValuePair{

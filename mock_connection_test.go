@@ -193,6 +193,44 @@ func (c *MockConnectionContextCall) DoAndReturn(f func() context.Context) *MockC
 	return c
 }
 
+// NegotiatedALPN mocks base method.
+func (m *MockConnection) NegotiatedALPN() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NegotiatedALPN")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// NegotiatedALPN indicates an expected call of NegotiatedALPN.
+func (mr *MockConnectionMockRecorder) NegotiatedALPN() *MockConnectionNegotiatedALPNCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NegotiatedALPN", reflect.TypeOf((*MockConnection)(nil).NegotiatedALPN))
+	return &MockConnectionNegotiatedALPNCall{Call: call}
+}
+
+// MockConnectionNegotiatedALPNCall wrap *gomock.Call
+type MockConnectionNegotiatedALPNCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockConnectionNegotiatedALPNCall) Return(arg0 string) *MockConnectionNegotiatedALPNCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockConnectionNegotiatedALPNCall) Do(f func() string) *MockConnectionNegotiatedALPNCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockConnectionNegotiatedALPNCall) DoAndReturn(f func() string) *MockConnectionNegotiatedALPNCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // OpenStream mocks base method.
 func (m *MockConnection) OpenStream() (Stream, error) {
 	m.ctrl.T.Helper()
