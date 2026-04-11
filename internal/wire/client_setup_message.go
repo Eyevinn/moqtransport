@@ -39,11 +39,7 @@ func (m *ClientSetupMessage) Append(buf []byte) []byte {
 			buf = quicvarint.Append(buf, uint64(v))
 		}
 	}
-	buf = quicvarint.Append(buf, uint64(len(m.SetupParameters)))
-	for _, p := range m.SetupParameters {
-		buf = p.append(buf)
-	}
-	return buf
+	return m.SetupParameters.AppendNumVersioned(m.WireVersion, buf)
 }
 
 func (m *ClientSetupMessage) parse(v Version, data []byte) error {
@@ -56,5 +52,5 @@ func (m *ClientSetupMessage) parse(v Version, data []byte) error {
 		data = data[n:]
 	}
 	m.SetupParameters = KVPList{}
-	return m.SetupParameters.parseNum(data)
+	return m.SetupParameters.ParseNumVersioned(v, data)
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/quic-go/quic-go/quicvarint"
 )
@@ -49,6 +50,70 @@ func (pp KVPList) append(buf []byte) []byte {
 		buf = p.append(buf)
 	}
 	return buf
+}
+
+// appendDelta appends all parameters using delta-encoded types (draft-16+).
+// Parameters must be sorted by ascending Type before calling.
+func (pp KVPList) appendDelta(buf []byte) []byte {
+	var prevType uint64
+	for _, p := range pp {
+		buf = p.appendDelta(buf, prevType)
+		prevType = p.Type
+	}
+	return buf
+}
+
+// AppendNumVersioned appends with count prefix, using delta encoding for draft-16+.
+func (pp KVPList) AppendNumVersioned(v Version, buf []byte) []byte {
+	buf = quicvarint.Append(buf, uint64(len(pp)))
+	if v.NegotiatedViaALPN() {
+		sorted := pp.sorted()
+		return sorted.appendDelta(buf)
+	}
+	return pp.append(buf)
+}
+
+// ParseNumVersioned parses a count-prefixed parameter list, using delta decoding for draft-16+.
+func (pp *KVPList) ParseNumVersioned(v Version, data []byte) error {
+	numParameters, n, err := quicvarint.Parse(data)
+	if err != nil {
+		return err
+	}
+	data = data[n:]
+
+	if v.NegotiatedViaALPN() {
+		var prevType uint64
+		for i := uint64(0); i < numParameters; i++ {
+			param := KeyValuePair{}
+			n, err := param.parseDelta(data, prevType)
+			if err != nil {
+				return err
+			}
+			prevType = param.Type
+			data = data[n:]
+			*pp = append(*pp, param)
+		}
+		return nil
+	}
+
+	for i := uint64(0); i < numParameters; i++ {
+		param := KeyValuePair{}
+		n, err := param.parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+		*pp = append(*pp, param)
+	}
+	return nil
+}
+
+// sorted returns a copy sorted by ascending Type (required for delta encoding).
+func (pp KVPList) sorted() KVPList {
+	cp := make(KVPList, len(pp))
+	copy(cp, pp)
+	sort.Slice(cp, func(i, j int) bool { return cp[i].Type < cp[j].Type })
+	return cp
 }
 
 func (pp KVPList) String() string {
