@@ -112,6 +112,17 @@ func (s *Session) Run(conn Connection) error {
 		return err
 	}
 
+	// Determine MoQ version from ALPN negotiation
+	alpn := conn.NegotiatedALPN()
+	if alpn != "" {
+		alpnVersion, ok := wire.VersionFromALPN(alpn)
+		if !ok {
+			return errors.New("unsupported ALPN: " + alpn)
+		}
+		s.version = alpnVersion // 0 for "moq-00" (negotiate via SETUP), specific version for "moqt-NN"
+	}
+	// For WebTransport (empty ALPN) or "moq-00", version stays 0 and is negotiated in SETUP
+
 	s.handshakeDoneCh = make(chan struct{})
 	s.logger = defaultLogger.With("perspective", conn.Perspective())
 	s.conn = conn
@@ -127,6 +138,7 @@ func (s *Session) Run(conn Connection) error {
 	s.outgoingTrackStatusRequests = newTrackStatusRequestMap()
 	s.controlStream = &controlStream{
 		stream:  cs,
+		version: s.version,
 		logger:  defaultLogger.With("perspective", conn.Perspective()),
 		qlogger: nil,
 	}
@@ -539,10 +551,15 @@ func (s *Session) sendClientSetup() error {
 			ValueBytes: []byte(path),
 		})
 	}
-	return s.controlStream.write(&wire.ClientSetupMessage{
-		SupportedVersions: wire.SupportedVersions,
-		SetupParameters:   params,
-	})
+	msg := &wire.ClientSetupMessage{
+		WireVersion:     s.version,
+		SetupParameters: params,
+	}
+	if !s.version.NegotiatedViaALPN() {
+		// Draft-14: include version list for in-band negotiation
+		msg.SupportedVersions = wire.SupportedVersions
+	}
+	return s.controlStream.write(msg)
 }
 
 // Subscribe subscribes to a track with the given options.
@@ -1100,17 +1117,23 @@ func (s *Session) onClientSetup(m *wire.ClientSetupMessage) error {
 	if s.conn.Perspective() != PerspectiveServer {
 		return errClientReceivedClientSetup
 	}
-	selectedVersion := -1
-	for _, v := range slices.Backward(wire.SupportedVersions) {
-		if slices.Contains(m.SupportedVersions, v) {
-			selectedVersion = int(v)
-			break
+
+	if s.version.NegotiatedViaALPN() {
+		// Draft-16+: version already determined by ALPN, no in-band negotiation
+	} else {
+		// Draft-14: negotiate version from the list in CLIENT_SETUP
+		selectedVersion := -1
+		for _, v := range slices.Backward(wire.SupportedVersions) {
+			if slices.Contains(m.SupportedVersions, v) {
+				selectedVersion = int(v)
+				break
+			}
 		}
+		if selectedVersion == -1 {
+			return errIncompatibleVersions
+		}
+		s.version = wire.Version(selectedVersion)
 	}
-	if selectedVersion == -1 {
-		return errIncompatibleVersions
-	}
-	s.version = wire.Version(selectedVersion)
 
 	path, err := validatePathParameter(m.SetupParameters, s.conn.Protocol() == ProtocolQUIC)
 	if err != nil {
@@ -1125,15 +1148,19 @@ func (s *Session) onClientSetup(m *wire.ClientSetupMessage) error {
 		}
 	}
 
-	if err := s.controlStream.write(&wire.ServerSetupMessage{
-		SelectedVersion: wire.Version(selectedVersion),
+	ssm := &wire.ServerSetupMessage{
+		WireVersion: s.version,
 		SetupParameters: wire.KVPList{
 			wire.KeyValuePair{
 				Type:        wire.MaxRequestIDParameterKey,
 				ValueVarInt: 100,
 			},
 		},
-	}); err != nil {
+	}
+	if !s.version.NegotiatedViaALPN() {
+		ssm.SelectedVersion = s.version
+	}
+	if err := s.controlStream.write(ssm); err != nil {
 		return err
 	}
 	close(s.handshakeDoneCh)
@@ -1146,10 +1173,15 @@ func (s *Session) onServerSetup(m *wire.ServerSetupMessage) (err error) {
 		return errServerReceveidServerSetup
 	}
 
-	if !slices.Contains(wire.SupportedVersions, m.SelectedVersion) {
-		return errIncompatibleVersions
+	if s.version.NegotiatedViaALPN() {
+		// Draft-16+: version already set by ALPN, no validation of SelectedVersion
+	} else {
+		// Draft-14: validate that server selected a version we support
+		if !slices.Contains(wire.SupportedVersions, m.SelectedVersion) {
+			return errIncompatibleVersions
+		}
+		s.version = m.SelectedVersion
 	}
-	s.version = m.SelectedVersion
 
 	remoteMaxRequestID := getMaxRequestIDParameter(m.SetupParameters)
 	if err := s.requestIDs.setMax(remoteMaxRequestID); err != nil {

@@ -7,7 +7,8 @@ import (
 )
 
 type ServerSetupMessage struct {
-	SelectedVersion Version
+	WireVersion     Version // controls wire format: draft-16+ omits selected version
+	SelectedVersion Version // only used for draft-14 (pre-ALPN negotiation)
 	SetupParameters KVPList
 }
 
@@ -30,7 +31,10 @@ func (m ServerSetupMessage) Type() controlMessageType {
 }
 
 func (m *ServerSetupMessage) Append(buf []byte) []byte {
-	buf = quicvarint.Append(buf, uint64(m.SelectedVersion))
+	if !m.WireVersion.NegotiatedViaALPN() {
+		// Draft-14: include selected version
+		buf = quicvarint.Append(buf, uint64(m.SelectedVersion))
+	}
 	buf = quicvarint.Append(buf, uint64(len(m.SetupParameters)))
 	for _, p := range m.SetupParameters {
 		buf = p.append(buf)
@@ -38,14 +42,16 @@ func (m *ServerSetupMessage) Append(buf []byte) []byte {
 	return buf
 }
 
-func (m *ServerSetupMessage) parse(_ Version, data []byte) error {
-	sv, n, err := quicvarint.Parse(data)
-	if err != nil {
-		return err
+func (m *ServerSetupMessage) parse(v Version, data []byte) error {
+	if !v.NegotiatedViaALPN() {
+		// Draft-14: parse selected version from wire
+		sv, n, err := quicvarint.Parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+		m.SelectedVersion = Version(sv)
 	}
-	data = data[n:]
-
-	m.SelectedVersion = Version(sv)
 	m.SetupParameters = KVPList{}
 	return m.SetupParameters.parseNum(data)
 }

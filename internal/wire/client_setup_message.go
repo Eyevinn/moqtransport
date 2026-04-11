@@ -7,7 +7,8 @@ import (
 )
 
 type ClientSetupMessage struct {
-	SupportedVersions versions
+	WireVersion       Version  // controls wire format: draft-16+ omits version list
+	SupportedVersions versions // only used for draft-14 (pre-ALPN negotiation)
 	SetupParameters   KVPList
 }
 
@@ -31,9 +32,12 @@ func (m ClientSetupMessage) Type() controlMessageType {
 }
 
 func (m *ClientSetupMessage) Append(buf []byte) []byte {
-	buf = quicvarint.Append(buf, uint64(len(m.SupportedVersions)))
-	for _, v := range m.SupportedVersions {
-		buf = quicvarint.Append(buf, uint64(v))
+	if !m.WireVersion.NegotiatedViaALPN() {
+		// Draft-14: include version list for in-band negotiation
+		buf = quicvarint.Append(buf, uint64(len(m.SupportedVersions)))
+		for _, v := range m.SupportedVersions {
+			buf = quicvarint.Append(buf, uint64(v))
+		}
 	}
 	buf = quicvarint.Append(buf, uint64(len(m.SetupParameters)))
 	for _, p := range m.SetupParameters {
@@ -42,12 +46,15 @@ func (m *ClientSetupMessage) Append(buf []byte) []byte {
 	return buf
 }
 
-func (m *ClientSetupMessage) parse(_ Version, data []byte) error {
-	n, err := m.SupportedVersions.parse(data)
-	if err != nil {
-		return err
+func (m *ClientSetupMessage) parse(v Version, data []byte) error {
+	if !v.NegotiatedViaALPN() {
+		// Draft-14: parse version list from wire
+		n, err := m.SupportedVersions.parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
 	}
-	data = data[n:]
 	m.SetupParameters = KVPList{}
 	return m.SetupParameters.parseNum(data)
 }

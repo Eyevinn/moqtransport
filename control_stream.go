@@ -11,12 +11,13 @@ import (
 
 type controlStream struct {
 	stream  Stream
+	version wire.Version
 	logger  *slog.Logger
 	qlogger *qlog.Logger
 }
 
 func (s *controlStream) read() iter.Seq2[wire.ControlMessage, error] {
-	parser := wire.NewControlMessageParser(s.stream)
+	parser := wire.NewControlMessageParser(s.stream, s.version)
 	return func(yield func(wire.ControlMessage, error) bool) {
 		for {
 			msg, err := parser.Parse()

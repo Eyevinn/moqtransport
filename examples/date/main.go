@@ -132,7 +132,7 @@ func generateTLSConfigWithCertAndKey(certFile, keyFile string) (*tls.Config, err
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"moq-00", "h3"},
+		NextProtos:   []string{"moqt-16", "moq-00", "h3"},
 	}, nil
 }
 
@@ -156,7 +156,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"moq-00", "h3"},
+		NextProtos:   []string{"moqt-16", "moq-00", "h3"},
 	}, nil
 }
 

@@ -58,7 +58,7 @@ func TestControlMessageParser(t *testing.T) {
 	}
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
-			p := NewControlMessageParser(tc.mr)
+			p := NewControlMessageParser(tc.mr, CurrentVersion)
 			m, err := p.Parse()
 			assert.Equal(t, tc.expect, m)
 			if tc.err != nil {
