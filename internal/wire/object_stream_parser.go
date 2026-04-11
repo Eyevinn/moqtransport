@@ -66,6 +66,8 @@ type ObjectStreamParser struct {
 	identifier    uint64 // Track Alias (Subgroup) or Request ID (Fetch)
 	hasSubgroupID bool
 	hasExtensions bool
+	objectCount   uint64 // number of objects parsed so far in this subgroup
+	prevObjectID  uint64 // previous object ID for delta decoding
 
 	PublisherPriority uint8
 	GroupID           uint64
@@ -179,6 +181,14 @@ func (p *ObjectStreamParser) parseSubgroupObject() (*ObjectMessage, error) {
 	if err := m.readSubgroup(p.reader); err != nil {
 		return nil, err
 	}
+	// Object IDs are delta-encoded within subgroup streams (draft-14+):
+	// "Object ID Delta + 1 is added to the previous Object ID if there was one.
+	//  The Object ID is the Object ID Delta if it's the first Object."
+	if p.objectCount > 0 {
+		m.ObjectID = p.prevObjectID + m.ObjectID + 1
+	}
+	p.prevObjectID = m.ObjectID
+	p.objectCount++
 	if !p.hasSubgroupID {
 		p.SubgroupID = m.SubgroupID
 		p.hasSubgroupID = true
