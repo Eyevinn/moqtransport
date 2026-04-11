@@ -7,9 +7,11 @@ import (
 )
 
 type SubscribeErrorMessage struct {
-	RequestID    uint64
-	ErrorCode    uint64
-	ReasonPhrase string
+	WireVersion   Version
+	RequestID     uint64
+	ErrorCode     uint64
+	RetryInterval uint64 // draft-16+: minimum ms before retry (0 = don't retry)
+	ReasonPhrase  string
 }
 
 func (m *SubscribeErrorMessage) LogValue() slog.Value {
@@ -29,11 +31,14 @@ func (m SubscribeErrorMessage) Type() controlMessageType {
 func (m *SubscribeErrorMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = quicvarint.Append(buf, uint64(m.ErrorCode))
+	if m.WireVersion.NegotiatedViaALPN() {
+		buf = quicvarint.Append(buf, m.RetryInterval)
+	}
 	buf = appendVarIntBytes(buf, []byte(m.ReasonPhrase))
 	return buf
 }
 
-func (m *SubscribeErrorMessage) parse(_ Version, data []byte) (err error) {
+func (m *SubscribeErrorMessage) parse(v Version, data []byte) (err error) {
 	var n int
 	m.RequestID, n, err = quicvarint.Parse(data)
 	if err != nil {
@@ -46,6 +51,15 @@ func (m *SubscribeErrorMessage) parse(_ Version, data []byte) (err error) {
 		return err
 	}
 	data = data[n:]
+
+	if v.NegotiatedViaALPN() {
+		// Draft-16 REQUEST_ERROR: includes RetryInterval
+		m.RetryInterval, n, err = quicvarint.Parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+	}
 
 	reasonPhrase, _, err := parseVarIntBytes(data)
 	if err != nil {

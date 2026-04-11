@@ -614,6 +614,7 @@ func (s *Session) Subscribe(
 	}
 
 	cm := &wire.SubscribeMessage{
+		WireVersion:        s.version,
 		RequestID:          requestID,
 		TrackNamespace:     namespace,
 		TrackName:          []byte(name),
@@ -712,6 +713,7 @@ func (s *Session) acceptSubscriptionWithOptions(id uint64, opts *SubscribeOkOpti
 	}
 
 	msg := &wire.SubscribeOkMessage{
+		WireVersion:   s.version,
 		RequestID:     id,
 		TrackAlias:    lt.trackAlias,
 		Expires:       opts.Expires,
@@ -734,6 +736,7 @@ func (s *Session) rejectSubscription(id uint64, errorCode ErrorCodeSubscribe, re
 		return errUnknownRequestID
 	}
 	return s.controlStream.write(&wire.SubscribeErrorMessage{
+		WireVersion:  s.version,
 		RequestID:    lt.requestID,
 		ErrorCode:    uint64(errorCode),
 		ReasonPhrase: reason,
@@ -932,6 +935,7 @@ func (s *Session) Announce(ctx context.Context, namespace []string) error {
 	}
 	s.outgoingAnnouncements.add(a)
 	am := &wire.AnnounceMessage{
+		WireVersion:    s.version,
 		RequestID:      a.requestID,
 		TrackNamespace: a.namespace,
 		Parameters:     a.parameters,
@@ -1242,6 +1246,7 @@ func (s *Session) onSubscribe(msg *wire.SubscribeMessage) error {
 			reason = "too many subscribes"
 		}
 		return s.controlStream.write(&wire.SubscribeErrorMessage{
+			WireVersion:  s.version,
 			RequestID:    lt.requestID,
 			ErrorCode:    uint64(code),
 			ReasonPhrase: reason,
