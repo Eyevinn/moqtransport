@@ -41,6 +41,18 @@ func (p KeyValuePair) append(buf []byte) []byte {
 	return quicvarint.Append(buf, p.ValueVarInt)
 }
 
+// appendDelta appends this parameter using delta-encoded type.
+// The delta is (p.Type - prevType). The caller must ensure ascending order.
+func (p KeyValuePair) appendDelta(buf []byte, prevType uint64) []byte {
+	delta := p.Type - prevType
+	buf = quicvarint.Append(buf, delta)
+	if p.Type%2 == 1 {
+		buf = quicvarint.Append(buf, uint64(len(p.ValueBytes)))
+		return append(buf, p.ValueBytes...)
+	}
+	return quicvarint.Append(buf, p.ValueVarInt)
+}
+
 func (p *KeyValuePair) parse(data []byte) (int, error) {
 	var n, parsed int
 	var err error
@@ -60,6 +72,42 @@ func (p *KeyValuePair) parse(data []byte) (int, error) {
 		}
 		data = data[n:]
 		p.ValueBytes = make([]byte, length) // TODO: Don't allocate memory here?
+		m := copy(p.ValueBytes, data[:length])
+		parsed += m
+		if uint64(m) != length {
+			return parsed, errLengthMismatch
+		}
+		return parsed, nil
+	}
+
+	p.ValueVarInt, n, err = quicvarint.Parse(data)
+	parsed += n
+	return parsed, err
+}
+
+// parseDelta parses a parameter with delta-encoded type.
+// prevType is added to the delta to recover the absolute type.
+func (p *KeyValuePair) parseDelta(data []byte, prevType uint64) (int, error) {
+	var n, parsed int
+	var err error
+	var delta uint64
+	delta, n, err = quicvarint.Parse(data)
+	parsed += n
+	if err != nil {
+		return n, err
+	}
+	p.Type = prevType + delta
+	data = data[n:]
+
+	if p.Type%2 == 1 {
+		var length uint64
+		length, n, err = quicvarint.Parse(data)
+		parsed += n
+		if err != nil {
+			return parsed, err
+		}
+		data = data[n:]
+		p.ValueBytes = make([]byte, length)
 		m := copy(p.ValueBytes, data[:length])
 		parsed += m
 		if uint64(m) != length {

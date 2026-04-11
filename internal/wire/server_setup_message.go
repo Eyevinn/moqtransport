@@ -35,11 +35,7 @@ func (m *ServerSetupMessage) Append(buf []byte) []byte {
 		// Draft-14: include selected version
 		buf = quicvarint.Append(buf, uint64(m.SelectedVersion))
 	}
-	buf = quicvarint.Append(buf, uint64(len(m.SetupParameters)))
-	for _, p := range m.SetupParameters {
-		buf = p.append(buf)
-	}
-	return buf
+	return m.SetupParameters.AppendNumVersioned(m.WireVersion, buf)
 }
 
 func (m *ServerSetupMessage) parse(v Version, data []byte) error {
@@ -53,5 +49,5 @@ func (m *ServerSetupMessage) parse(v Version, data []byte) error {
 		m.SelectedVersion = Version(sv)
 	}
 	m.SetupParameters = KVPList{}
-	return m.SetupParameters.parseNum(data)
+	return m.SetupParameters.ParseNumVersioned(v, data)
 }
