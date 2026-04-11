@@ -7,6 +7,7 @@ import (
 )
 
 type SubscribeUpdateMessage struct {
+	WireVersion           Version
 	RequestID             uint64
 	SubscriptionRequestID uint64
 	StartLocation         Location
@@ -43,6 +44,36 @@ func (m SubscribeUpdateMessage) Type() controlMessageType {
 func (m *SubscribeUpdateMessage) Append(buf []byte) []byte {
 	buf = quicvarint.Append(buf, m.RequestID)
 	buf = quicvarint.Append(buf, m.SubscriptionRequestID)
+
+	if m.WireVersion.NegotiatedViaALPN() {
+		// Draft-16 REQUEST_UPDATE: all fields in parameters
+		params := make(KVPList, len(m.Parameters))
+		copy(params, m.Parameters)
+		params = append(params, KeyValuePair{
+			Type:        ForwardParamKey,
+			ValueVarInt: uint64(m.Forward),
+		})
+		params = append(params, KeyValuePair{
+			Type:        SubscriberPriorityParamKey,
+			ValueVarInt: uint64(m.SubscriberPriority),
+		})
+		// SUBSCRIPTION_FILTER with start/end
+		filterBuf := quicvarint.Append(nil, uint64(FilterTypeAbsoluteStart))
+		filterBuf = m.StartLocation.append(filterBuf)
+		if m.EndGroup > 0 {
+			filterBuf = filterBuf[:0]
+			filterBuf = quicvarint.Append(filterBuf, uint64(FilterTypeAbsoluteRange))
+			filterBuf = m.StartLocation.append(filterBuf)
+			filterBuf = quicvarint.Append(filterBuf, m.EndGroup)
+		}
+		params = append(params, KeyValuePair{
+			Type:       SubscriptionFilterParamKey,
+			ValueBytes: filterBuf,
+		})
+		return params.AppendNumVersioned(m.WireVersion, buf)
+	}
+
+	// Draft-14: inline fields
 	buf = m.StartLocation.append(buf)
 	buf = quicvarint.Append(buf, m.EndGroup)
 	buf = append(buf, m.SubscriberPriority)
@@ -65,6 +96,47 @@ func (m *SubscribeUpdateMessage) parse(v Version, data []byte) (err error) {
 	}
 	data = data[n:]
 
+	if v.NegotiatedViaALPN() {
+		// Draft-16 REQUEST_UPDATE: fields in parameters
+		m.Parameters = KVPList{}
+		if err := m.Parameters.ParseNumVersioned(v, data); err != nil {
+			return err
+		}
+		m.SubscriberPriority = 128
+		m.Forward = 1
+		for _, p := range m.Parameters {
+			switch p.Type {
+			case SubscriberPriorityParamKey:
+				m.SubscriberPriority = uint8(p.ValueVarInt)
+			case ForwardParamKey:
+				m.Forward = uint8(p.ValueVarInt)
+			case SubscriptionFilterParamKey:
+				if len(p.ValueBytes) > 0 {
+					ft, fn, ferr := quicvarint.Parse(p.ValueBytes)
+					if ferr != nil {
+						return ferr
+					}
+					filterData := p.ValueBytes[fn:]
+					if FilterType(ft) == FilterTypeAbsoluteStart || FilterType(ft) == FilterTypeAbsoluteRange {
+						fn, ferr = m.StartLocation.parse(v, filterData)
+						if ferr != nil {
+							return ferr
+						}
+						filterData = filterData[fn:]
+					}
+					if FilterType(ft) == FilterTypeAbsoluteRange {
+						m.EndGroup, _, ferr = quicvarint.Parse(filterData)
+						if ferr != nil {
+							return ferr
+						}
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	// Draft-14: inline fields
 	n, err = m.StartLocation.parse(v, data)
 	if err != nil {
 		return err

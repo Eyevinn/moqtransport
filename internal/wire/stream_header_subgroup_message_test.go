@@ -163,7 +163,7 @@ func TestParseStreamHeaderSubgroupMessage(t *testing.T) {
 		t.Run(fmt.Sprintf("%v", i), func(t *testing.T) {
 			reader := bufio.NewReader(bytes.NewReader(tc.data))
 			res := &SubgroupHeaderMessage{}
-			err := res.parse(reader, true)
+			err := res.parse(reader, true, false)
 			assert.Equal(t, tc.expect, res)
 			if tc.err != nil {
 				assert.Equal(t, tc.err, err)

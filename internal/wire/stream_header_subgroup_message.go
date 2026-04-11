@@ -24,7 +24,7 @@ func (m *SubgroupHeaderMessage) Append(buf []byte) []byte {
 	return append(buf, m.PublisherPriority)
 }
 
-func (m *SubgroupHeaderMessage) parse(reader messageReader, sid bool) (err error) {
+func (m *SubgroupHeaderMessage) parse(reader messageReader, sid bool, defaultPriority bool) (err error) {
 	m.TrackAlias, err = quicvarint.Read(reader)
 	if err != nil {
 		return
@@ -39,6 +39,10 @@ func (m *SubgroupHeaderMessage) parse(reader messageReader, sid bool) (err error
 			return
 		}
 	}
-	m.PublisherPriority, err = reader.ReadByte()
+	if !defaultPriority {
+		m.PublisherPriority, err = reader.ReadByte()
+	}
+	// When defaultPriority is true, PublisherPriority stays at zero value;
+	// the caller inherits it from the control message that established the subscription.
 	return
 }
