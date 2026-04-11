@@ -100,6 +100,11 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 	case messageTypeAnnounceOk:
 		m = &AnnounceOkMessage{}
 	case messageTypeAnnounceError:
+		if p.version.NegotiatedViaALPN() {
+			// Draft-16: 0x08 is NAMESPACE, not ANNOUNCE_ERROR
+			// TODO: implement NAMESPACE message parsing
+			return nil, fmt.Errorf("%w: NAMESPACE (0x08) not yet implemented", errInvalidMessageType)
+		}
 		m = &AnnounceErrorMessage{}
 	case messageTypeUnannounce:
 		m = &UnannounceMessage{}

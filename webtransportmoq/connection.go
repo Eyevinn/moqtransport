@@ -109,5 +109,5 @@ func (c *webTransportConn) Perspective() moqtransport.Perspective {
 }
 
 func (c *webTransportConn) NegotiatedALPN() string {
-	return "" // WebTransport version negotiation deferred
+	return c.session.SessionState().ApplicationProtocol
 }

@@ -40,21 +40,31 @@ var (
 )
 
 func isSubgroupStreamType(st StreamType) bool {
-	return (st >= 0x10 && st <= 0x15) || (st >= 0x18 && st <= 0x1D)
+	// 0x10-0x15, 0x18-0x1D (without DEFAULT_PRIORITY)
+	// 0x30-0x35, 0x38-0x3D (with DEFAULT_PRIORITY, draft-16+)
+	low := st & 0x1F // strip DEFAULT_PRIORITY bit
+	return (low >= 0x10 && low <= 0x15) || (low >= 0x18 && low <= 0x1D)
 }
 
 func subgroupHasExplicitSID(st StreamType) bool {
-	return st == StreamTypeSubgroupSIDNoExt || st == StreamTypeSubgroupSIDExt ||
-		st == StreamTypeSubgroupSIDNoExtEOG || st == StreamTypeSubgroupSIDExtEOG
+	low := st & 0x1F
+	return low == 0x14 || low == 0x15 || low == 0x1C || low == 0x1D
 }
 
 func subgroupSIDIsFirstObjectID(st StreamType) bool {
-	return st == StreamTypeSubgroupNoSIDNoExt || st == StreamTypeSubgroupNoSIDExt ||
-		st == StreamTypeSubgroupNoSIDNoExtEOG || st == StreamTypeSubgroupNoSIDExtEOG
+	low := st & 0x1F
+	return low == 0x12 || low == 0x13 || low == 0x1A || low == 0x1B
 }
 
 func subgroupContainsEndOfGroup(st StreamType) bool {
-	return st >= 0x18 && st <= 0x1D
+	low := st & 0x1F
+	return low >= 0x18 && low <= 0x1D
+}
+
+// subgroupHasDefaultPriority returns true when the DEFAULT_PRIORITY bit (0x20) is set,
+// meaning the Priority field is omitted from the header (draft-16+).
+func subgroupHasDefaultPriority(st StreamType) bool {
+	return st&0x20 != 0
 }
 
 type ObjectStreamParser struct {
@@ -129,9 +139,10 @@ func NewObjectStreamParser(r io.Reader, streamID uint64, qlogger *qlog.Logger) (
 		// Only read subgroup ID from header if type has explicit SID field.
 		// In all other cases, it is either zero or will be read from the first object.
 		sid := subgroupHasExplicitSID(streamType)
+		defPri := subgroupHasDefaultPriority(streamType)
 
 		var shsm SubgroupHeaderMessage
-		if err := shsm.parse(br, sid); err != nil {
+		if err := shsm.parse(br, sid, defPri); err != nil {
 			return nil, err
 		}
 		return &ObjectStreamParser{
