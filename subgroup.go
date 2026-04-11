@@ -9,9 +9,11 @@ import (
 type Subgroup struct {
 	qlogger *qlog.Logger
 
-	stream     SendStream
-	groupID    uint64
-	subgroupID uint64
+	stream       SendStream
+	groupID      uint64
+	subgroupID   uint64
+	objectCount  uint64
+	prevObjectID uint64
 }
 
 func newSubgroup(stream SendStream, trackAlias, groupID, subgroupID uint64, publisherPriority uint8, endOfGroup bool, qlogger *qlog.Logger) (*Subgroup, error) {
@@ -44,6 +46,16 @@ func newSubgroup(stream SendStream, trackAlias, groupID, subgroupID uint64, publ
 }
 
 func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
+	// Object IDs are delta-encoded on the wire (draft-14+):
+	// First object: delta = objectID
+	// Subsequent objects: delta = objectID - prevObjectID - 1
+	delta := objectID
+	if s.objectCount > 0 {
+		delta = objectID - s.prevObjectID - 1
+	}
+	s.prevObjectID = objectID
+	s.objectCount++
+
 	var buf []byte
 	if len(payload) > 0 {
 		buf = make([]byte, 0, 16+len(payload))
@@ -51,7 +63,7 @@ func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
 		buf = make([]byte, 0, 24)
 	}
 	o := wire.ObjectMessage{
-		ObjectID:      objectID,
+		ObjectID:      delta,
 		ObjectPayload: payload,
 	}
 	buf = o.AppendSubgroup(buf)
