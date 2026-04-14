@@ -46,6 +46,10 @@ func newSubgroup(stream SendStream, trackAlias, groupID, subgroupID uint64, publ
 }
 
 func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
+	return s.WriteObjectWithHeaders(objectID, nil, payload)
+}
+
+func (s *Subgroup) WriteObjectWithHeaders(objectID uint64, headers KVPList, payload []byte) (int, error) {
 	// Object IDs are delta-encoded on the wire (draft-14+):
 	// First object: delta = objectID
 	// Subsequent objects: delta = objectID - prevObjectID - 1
@@ -63,8 +67,9 @@ func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
 		buf = make([]byte, 0, 24)
 	}
 	o := wire.ObjectMessage{
-		ObjectID:      delta,
-		ObjectPayload: payload,
+		ObjectID:               delta,
+		ObjectExtensionHeaders: headers.ToWire(),
+		ObjectPayload:          payload,
 	}
 	buf = o.AppendSubgroup(buf)
 	_, err := s.stream.Write(buf)
@@ -72,6 +77,7 @@ func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
 		return 0, err
 	}
 	if s.qlogger != nil {
+		eth := extensionHeadersToQlog(o.ObjectExtensionHeaders)
 		gid := new(uint64)
 		sid := new(uint64)
 		*gid = s.groupID
@@ -82,8 +88,8 @@ func (s *Subgroup) WriteObject(objectID uint64, payload []byte) (int, error) {
 			GroupID:                gid,
 			SubgroupID:             sid,
 			ObjectID:               objectID,
-			ExtensionHeadersLength: 0,
-			ExtensionHeaders:       nil,
+			ExtensionHeadersLength: uint64(len(eth)),
+			ExtensionHeaders:       eth,
 			ObjectPayloadLength:    uint64(len(payload)),
 			ObjectStatus:           0,
 			ObjectPayload: qlog.RawInfo{

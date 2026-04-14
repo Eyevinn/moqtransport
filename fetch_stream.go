@@ -39,14 +39,24 @@ func (f *FetchStream) WriteObject(
 	priority uint8,
 	payload []byte,
 ) (int, error) {
+	return f.WriteObjectWithHeaders(groupID, subgroupID, objectID, priority, nil, payload)
+}
+
+func (f *FetchStream) WriteObjectWithHeaders(
+	groupID, subgroupID, objectID uint64,
+	priority uint8,
+	headers KVPList,
+	payload []byte,
+) (int, error) {
 	buf := make([]byte, 0, 1400)
 	fo := wire.ObjectMessage{
-		GroupID:           groupID,
-		SubgroupID:        subgroupID,
-		ObjectID:          objectID,
-		PublisherPriority: priority,
-		ObjectStatus:      0,
-		ObjectPayload:     payload,
+		GroupID:                groupID,
+		SubgroupID:             subgroupID,
+		ObjectID:               objectID,
+		PublisherPriority:      priority,
+		ObjectExtensionHeaders: headers.ToWire(),
+		ObjectStatus:           0,
+		ObjectPayload:          payload,
 	}
 	buf = fo.AppendFetch(buf)
 	_, err := f.stream.Write(buf)
@@ -54,14 +64,15 @@ func (f *FetchStream) WriteObject(
 		return 0, err
 	}
 	if f.qlogger != nil {
+		eth := extensionHeadersToQlog(fo.ObjectExtensionHeaders)
 		f.qlogger.Log(moqt.FetchObjectEvent{
 			EventName:              moqt.FetchObjectEventCreated,
 			StreamID:               f.stream.StreamID(),
 			GroupID:                groupID,
 			SubgroupID:             subgroupID,
 			ObjectID:               objectID,
-			ExtensionHeadersLength: 0,
-			ExtensionHeaders:       nil,
+			ExtensionHeadersLength: uint64(len(eth)),
+			ExtensionHeaders:       eth,
 			ObjectPayloadLength:    uint64(len(payload)),
 			ObjectStatus:           0,
 			ObjectPayload: qlog.RawInfo{

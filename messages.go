@@ -62,8 +62,9 @@ func (kvpl KVPList) ToWire() wire.KVPList {
 }
 
 // FromWire creates a deep copy of wire.KVPList as KVPList to prevent mutation.
+// Returns nil if the input is nil or empty.
 func FromWire(wireKVP wire.KVPList) KVPList {
-	if wireKVP == nil {
+	if len(wireKVP) == 0 {
 		return nil
 	}
 	result := make(KVPList, len(wireKVP))
