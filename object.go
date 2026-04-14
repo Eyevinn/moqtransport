@@ -13,5 +13,6 @@ type Object struct {
 	ObjectID             uint64
 	ForwardingPreference ObjectForwardingPreference
 	SubGroupID           uint64
+	ExtensionHeaders     KVPList
 	Payload              []byte
 }

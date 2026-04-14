@@ -79,7 +79,7 @@ func (p *localTrack) sendDatagram(o Object) error {
 		GroupID:                o.GroupID,
 		ObjectID:               o.ObjectID,
 		PublisherPriority:      0,
-		ObjectExtensionHeaders: nil,
+		ObjectExtensionHeaders: o.ExtensionHeaders.ToWire(),
 		ObjectStatus:           0,
 		ObjectPayload:          o.Payload,
 	}

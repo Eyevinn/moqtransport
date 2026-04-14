@@ -66,8 +66,7 @@ func TestFromWire(t *testing.T) {
 	t.Run("FromWire handles empty slice", func(t *testing.T) {
 		original := wire.KVPList{}
 		kvpCopy := FromWire(original)
-		assert.NotNil(t, kvpCopy)
-		assert.Len(t, kvpCopy, 0)
+		assert.Nil(t, kvpCopy)
 	})
 }
 

@@ -39,8 +39,15 @@ Basic usage involves:
 3. Implementing handlers for various MoQT messages
 4. Publishing or subscribing to tracks
 
+## Extension Headers
+
+Objects support extension headers via the `ExtensionHeaders` field on `Object` and the `WriteObjectWithHeaders` method on `Subgroup` and `FetchStream`.
+
+The `moqmi` sub-package provides builders and readers for [MoQ Media Interop](https://datatracker.ietf.org/doc/draft-cenzano-moq-media-interop/) extension headers (video H264 AVCC, audio Opus, audio AAC-LC, UTF-8 text).
+
 ## Project Structure
 
+- `moqmi/`: MoQ Media Interop extension header builders and readers
 - `quicmoq/`: QUIC-specific implementation
 - `webtransportmoq/`: WebTransport-specific implementation
 - `internal/`: Internal implementation details

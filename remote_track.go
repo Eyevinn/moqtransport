@@ -154,10 +154,11 @@ func (t *RemoteTrack) readStream(parser objectMessageParser) error {
 			return errors.New("failed to copy object payload: copied less bytes than expected")
 		}
 		t.push(&Object{
-			GroupID:    m.GroupID,
-			SubGroupID: m.SubgroupID,
-			ObjectID:   m.ObjectID,
-			Payload:    payload,
+			GroupID:          m.GroupID,
+			SubGroupID:       m.SubgroupID,
+			ObjectID:         m.ObjectID,
+			ExtensionHeaders: FromWire(m.ObjectExtensionHeaders),
+			Payload:          payload,
 		})
 	}
 	return nil

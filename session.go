@@ -280,6 +280,7 @@ func (s *Session) receiveDatagram(msg *wire.ObjectDatagramMessage) error {
 		GroupID:              msg.GroupID,
 		ObjectID:             msg.ObjectID,
 		ForwardingPreference: ObjectForwardingPreferenceDatagram,
+		ExtensionHeaders:     FromWire(msg.ObjectExtensionHeaders),
 		Payload:              msg.ObjectPayload,
 	})
 	return nil
