@@ -1,9 +1,7 @@
 package wire
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 
 	"github.com/quic-go/quic-go/quicvarint"
 )
@@ -121,29 +119,3 @@ func (p *KeyValuePair) parseDelta(data []byte, prevType uint64) (int, error) {
 	return parsed, err
 }
 
-func (p *KeyValuePair) parseReader(br *bufio.Reader) error {
-	var err error
-	p.Type, err = quicvarint.Read(br)
-	if err != nil {
-		return err
-	}
-	if p.Type%2 == 1 {
-		var length uint64
-		length, err = quicvarint.Read(br)
-		if err != nil {
-			return err
-		}
-		p.ValueBytes = make([]byte, length)
-		var m int
-		m, err = io.ReadFull(br, p.ValueBytes)
-		if err != nil {
-			return err
-		}
-		if uint64(m) != length {
-			return errLengthMismatch
-		}
-		return nil
-	}
-	p.ValueVarInt, err = quicvarint.Read(br)
-	return err
-}

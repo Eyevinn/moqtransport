@@ -138,15 +138,20 @@ func (pp *KVPList) parseLengthReader(br *bufio.Reader) error {
 	if length == 0 {
 		return nil
 	}
-	lr := io.LimitReader(br, int64(length))
-	lbr := bufio.NewReader(quicvarint.NewReader(lr))
-	for {
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(br, buf); err != nil {
+		return err
+	}
+	for len(buf) > 0 {
 		var hdrExt KeyValuePair
-		if err = hdrExt.parseReader(lbr); err != nil {
+		n, err := hdrExt.parse(buf)
+		if err != nil {
 			return err
 		}
+		buf = buf[n:]
 		*pp = append(*pp, hdrExt)
 	}
+	return nil
 }
 
 // Parses pp from data based on a length prefix in number of elements
