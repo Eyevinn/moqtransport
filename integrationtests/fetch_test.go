@@ -132,6 +132,18 @@ func TestFetch(t *testing.T) {
 		assert.Equal(t, moqtransport.Location{Group: 10, Object: 0}, fm.EndLocation)
 	})
 
+	// acceptingSubscribeHandler accepts every subscription, optionally reporting
+	// a largest location so a joining fetch can be resolved against it.
+	acceptingSubscribeHandler := func(largest *moqtransport.Location) moqtransport.SubscribeHandler {
+		return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+			if largest != nil {
+				assert.NoError(t, w.Accept(moqtransport.WithLargestLocation(largest)))
+			} else {
+				assert.NoError(t, w.Accept())
+			}
+		})
+	}
+
 	t.Run("relative_joining_fetch", func(t *testing.T) {
 		sConn, cConn, cancel := connect(t)
 		defer cancel()
@@ -145,14 +157,21 @@ func TestFetch(t *testing.T) {
 			publisherCh <- w
 		})
 		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
-			handler:      moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, m *moqtransport.Message) {}),
-			fetchHandler: fetchHandler,
+			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
+			fetchHandler:     fetchHandler,
 		})
 		defer cancel()
 
-		// Use subscribeRequestID=7 and precedingGroupOffset=3 for a relative joining fetch
+		// Establish a Largest Object subscription first; the joining fetch is
+		// resolved relative to its largest location.
+		sub, err := ct.Subscribe(context.Background(), []string{"ns"}, "catalog")
+		assert.NoError(t, err)
+		largest, ok := sub.LargestLocation()
+		assert.True(t, ok)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 2}, largest)
+
 		rt, err := ct.Fetch(context.Background(), nil, "",
-			moqtransport.WithJoiningFetchRelative(7, 3),
+			moqtransport.WithJoiningFetchRelative(sub.RequestID(), 0),
 		)
 		assert.NoError(t, err)
 		assert.NotNil(t, rt)
@@ -163,9 +182,13 @@ func TestFetch(t *testing.T) {
 		case <-time.After(time.Second):
 			assert.FailNow(t, "timeout waiting for FetchMessage")
 		}
+		// The publisher resolved namespace, track and the [start, end) range.
 		assert.Equal(t, moqtransport.FetchTypeRelativeJoining, fm.FetchType)
-		assert.Equal(t, uint64(7), fm.JoiningSubscribeID)
-		assert.Equal(t, uint64(3), fm.JoiningStart)
+		assert.Equal(t, sub.RequestID(), fm.JoiningSubscribeID)
+		assert.Equal(t, []string{"ns"}, fm.Namespace)
+		assert.Equal(t, "catalog", fm.Track)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 0}, fm.StartLocation)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 3}, fm.EndLocation) // largest.Object + 1
 
 		// Verify objects can be sent back
 		var publisher *moqtransport.FetchResponseWriter
@@ -177,7 +200,7 @@ func TestFetch(t *testing.T) {
 
 		fs, err := publisher.FetchStream()
 		assert.NoError(t, err)
-		_, err = fs.WriteObject(10, 0, 0, 0, []byte("joining-data"))
+		_, err = fs.WriteObject(4, 0, 0, 0, []byte("joining-data"))
 		assert.NoError(t, err)
 		assert.NoError(t, fs.Close())
 
@@ -186,8 +209,51 @@ func TestFetch(t *testing.T) {
 
 		o, err := rt.ReadObject(ctx2)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(10), o.GroupID)
+		assert.Equal(t, uint64(4), o.GroupID)
 		assert.Equal(t, []byte("joining-data"), o.Payload)
+	})
+
+	t.Run("relative_joining_fetch_draft16", func(t *testing.T) {
+		// Draft-16 carries the SUBSCRIBE_OK largest location as a parameter
+		// rather than inline (see subscribe_ok_message.go); verify joining-fetch
+		// resolution works identically over draft-16.
+		sConn, cConn, cancel := connectALPN(t, "moqt-16")
+		defer cancel()
+
+		fetchMsgCh := make(chan *moqtransport.FetchMessage, 1)
+		fetchHandler := moqtransport.FetchHandlerFunc(func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
+			fetchMsgCh <- m
+			assert.NoError(t, w.Accept())
+		})
+		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
+			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
+			fetchHandler:     fetchHandler,
+		})
+		defer cancel()
+
+		sub, err := ct.Subscribe(context.Background(), []string{"ns"}, "catalog")
+		assert.NoError(t, err)
+		largest, ok := sub.LargestLocation()
+		assert.True(t, ok)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 2}, largest)
+
+		rt, err := ct.Fetch(context.Background(), nil, "",
+			moqtransport.WithJoiningFetchRelative(sub.RequestID(), 0),
+		)
+		assert.NoError(t, err)
+		assert.NotNil(t, rt)
+
+		var fm *moqtransport.FetchMessage
+		select {
+		case fm = <-fetchMsgCh:
+		case <-time.After(time.Second):
+			assert.FailNow(t, "timeout waiting for FetchMessage")
+		}
+		assert.Equal(t, moqtransport.FetchTypeRelativeJoining, fm.FetchType)
+		assert.Equal(t, []string{"ns"}, fm.Namespace)
+		assert.Equal(t, "catalog", fm.Track)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 0}, fm.StartLocation)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 3}, fm.EndLocation)
 	})
 
 	t.Run("absolute_joining_fetch", func(t *testing.T) {
@@ -201,13 +267,16 @@ func TestFetch(t *testing.T) {
 			assert.NoError(t, w.Accept())
 		})
 		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
-			handler:      moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, m *moqtransport.Message) {}),
-			fetchHandler: fetchHandler,
+			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
+			fetchHandler:     fetchHandler,
 		})
 		defer cancel()
 
+		sub, err := ct.Subscribe(context.Background(), []string{"ns"}, "catalog")
+		assert.NoError(t, err)
+
 		rt, err := ct.Fetch(context.Background(), nil, "",
-			moqtransport.WithJoiningFetchAbsolute(12, 100),
+			moqtransport.WithJoiningFetchAbsolute(sub.RequestID(), 2),
 		)
 		assert.NoError(t, err)
 		assert.NotNil(t, rt)
@@ -219,7 +288,87 @@ func TestFetch(t *testing.T) {
 			assert.FailNow(t, "timeout waiting for FetchMessage")
 		}
 		assert.Equal(t, moqtransport.FetchTypeAbsoluteJoining, fm.FetchType)
-		assert.Equal(t, uint64(12), fm.JoiningSubscribeID)
-		assert.Equal(t, uint64(100), fm.JoiningStart)
+		assert.Equal(t, sub.RequestID(), fm.JoiningSubscribeID)
+		assert.Equal(t, []string{"ns"}, fm.Namespace)
+		assert.Equal(t, "catalog", fm.Track)
+		assert.Equal(t, moqtransport.Location{Group: 2, Object: 0}, fm.StartLocation)
+		assert.Equal(t, moqtransport.Location{Group: 4, Object: 3}, fm.EndLocation)
+	})
+
+	t.Run("joining_fetch_unknown_request_id", func(t *testing.T) {
+		sConn, cConn, cancel := connect(t)
+		defer cancel()
+
+		fetchHandler := moqtransport.FetchHandlerFunc(func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
+			assert.FailNow(t, "handler must not be called for an invalid joining fetch")
+		})
+		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
+			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
+			fetchHandler:     fetchHandler,
+		})
+		defer cancel()
+
+		// No subscription with this request ID exists.
+		_, err := ct.Fetch(context.Background(), nil, "",
+			moqtransport.WithJoiningFetchRelative(99999, 0),
+		)
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "unknown joining request id")
+	})
+
+	t.Run("joining_fetch_no_content_invalid_range", func(t *testing.T) {
+		sConn, cConn, cancel := connect(t)
+		defer cancel()
+
+		fetchHandler := moqtransport.FetchHandlerFunc(func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
+			assert.FailNow(t, "handler must not be called when there is no content")
+		})
+		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
+			// Accept without a largest location → no content published.
+			subscribeHandler: acceptingSubscribeHandler(nil),
+			fetchHandler:     fetchHandler,
+		})
+		defer cancel()
+
+		sub, err := ct.Subscribe(context.Background(), []string{"ns"}, "catalog")
+		assert.NoError(t, err)
+
+		_, err = ct.Fetch(context.Background(), nil, "",
+			moqtransport.WithJoiningFetchRelative(sub.RequestID(), 0),
+		)
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "no content")
+	})
+
+	t.Run("joining_fetch_wrong_filter_is_protocol_violation", func(t *testing.T) {
+		sConn, cConn, cancel := connect(t)
+		defer cancel()
+
+		fetchHandler := moqtransport.FetchHandlerFunc(func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
+			assert.FailNow(t, "handler must not be called on a protocol violation")
+		})
+		srv, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
+			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
+			fetchHandler:     fetchHandler,
+		})
+		defer cancel()
+
+		// Subscribe with a non-Largest-Object filter; a joining fetch against it
+		// is a session-fatal protocol violation.
+		sub, err := ct.Subscribe(context.Background(), []string{"ns"}, "catalog",
+			moqtransport.WithFilterType(moqtransport.FilterTypeNextGroupStart))
+		assert.NoError(t, err)
+
+		// The publisher closes the session instead of responding, so the fetch
+		// does not complete; bound it with a timeout.
+		fctx, fcancel := context.WithTimeout(context.Background(), time.Second)
+		defer fcancel()
+		_, err = ct.Fetch(fctx, nil, "",
+			moqtransport.WithJoiningFetchRelative(sub.RequestID(), 0))
+		assert.Error(t, err)
+
+		// The server session terminates with a protocol violation, surfaced via
+		// its background errgroup when closed.
+		assert.ErrorContains(t, srv.Close(), "filter type Largest Object")
 	})
 }

@@ -30,6 +30,16 @@ type localTrack struct {
 	ctx             context.Context
 	cancelCtx       context.CancelCauseFunc
 	subscribeDone   subscribeDoneCallback
+
+	// Subscription state, populated for subscribe-origin tracks in onSubscribe
+	// and used to resolve joining fetches (see Session.onFetch and
+	// resolveJoiningFetch). isSubscription stays false for fetch-origin tracks,
+	// so a fetch can never be the target of a joining fetch.
+	isSubscription  bool
+	namespace       []string
+	trackName       string
+	filterType      wire.FilterType
+	largestLocation *Location // saved from SUBSCRIBE_OK at Accept time
 }
 
 func newLocalTrack(conn Connection, requestID, trackAlias uint64, onSubscribeDone subscribeDoneCallback, qlogger *qlog.Logger) *localTrack {
