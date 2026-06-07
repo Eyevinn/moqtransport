@@ -3,6 +3,7 @@ package moqtransport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"log/slog"
 	"sync/atomic"
@@ -94,7 +95,20 @@ type Session struct {
 	outgoingTrackStatusRequests *trackStatusRequestMap
 }
 
+// Run starts the session and blocks until the MoQ SETUP handshake completes or
+// the session is closed. The handshake is given no deadline; prefer RunContext
+// to bound setup so a peer that never completes SETUP cannot block forever.
 func (s *Session) Run(conn Connection) error {
+	return s.RunContext(context.Background(), conn)
+}
+
+// RunContext is like Run but bounds the SETUP handshake (control-stream
+// establishment and the CLIENT_SETUP/SERVER_SETUP exchange) by setupCtx. If
+// setupCtx is cancelled or its deadline elapses before the handshake completes,
+// RunContext tears down the partially-started session and returns an error
+// wrapping context.Cause(setupCtx). setupCtx only bounds setup: once the
+// handshake completes the session runs until Close, independent of setupCtx.
+func (s *Session) RunContext(setupCtx context.Context, conn Connection) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.eg, s.ctx = errgroup.WithContext(ctx)
 	s.cancelCtx = cancel
@@ -102,9 +116,9 @@ func (s *Session) Run(conn Connection) error {
 	var cs Stream
 	var err error
 	if conn.Perspective() == PerspectiveServer {
-		cs, err = conn.AcceptStream(ctx)
+		cs, err = conn.AcceptStream(setupCtx)
 	} else if conn.Perspective() == PerspectiveClient {
-		cs, err = conn.OpenStreamSync(ctx)
+		cs, err = conn.OpenStreamSync(setupCtx)
 	} else {
 		return errors.New("invalid perspective")
 	}
@@ -156,6 +170,15 @@ func (s *Session) Run(conn Connection) error {
 	case <-s.ctx.Done():
 		return context.Cause(s.ctx)
 	case <-s.handshakeDoneCh:
+	case <-setupCtx.Done():
+		// The peer never completed the MoQ SETUP exchange in time. Tear down
+		// the goroutines started above (closing the connection unblocks the
+		// control-stream reader) and surface the cause instead of hanging.
+		cause := context.Cause(setupCtx)
+		s.cancelCtx()
+		_ = s.conn.CloseWithError(0, "")
+		_ = s.eg.Wait()
+		return fmt.Errorf("moq setup handshake: %w", cause)
 	}
 	return nil
 }
