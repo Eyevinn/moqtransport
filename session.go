@@ -63,6 +63,15 @@ type Session struct {
 	// QLOG Logger
 	Qlogger *qlog.Logger
 
+	// Protocols lists the application protocols (ALPN values / WebTransport
+	// subprotocols) the caller offered to the peer, most-preferred first
+	// (e.g. []string{"moqt-16"}). It is consulted only by clients over
+	// WebTransport: if the peer does not echo a WT-Protocol header and every
+	// offered protocol is draft-16+ (negotiated out-of-band), RunContext
+	// refuses to silently fall back to in-band draft-14 negotiation and returns
+	// an error instead. Optional; when empty the historical behavior is kept.
+	Protocols []string
+
 	eg              *errgroup.Group
 	ctx             context.Context
 	cancelCtx       context.CancelFunc
@@ -134,6 +143,17 @@ func (s *Session) RunContext(setupCtx context.Context, conn Connection) error {
 			return errors.New("unsupported ALPN: " + alpn)
 		}
 		s.version = alpnVersion // 0 for "moq-00" (negotiate via SETUP), specific version for "moqt-NN"
+	} else if conn.Protocol() == ProtocolWebTransport && !s.offerSupportsInBandNegotiation() {
+		// WebTransport peer returned no negotiated subprotocol (it omitted the
+		// WT-Protocol response header) and every protocol we offered is
+		// draft-16+, which is negotiated out-of-band. The server is required to
+		// echo the chosen subprotocol (draft-ietf-webtrans-overview §3.1), so
+		// without it we cannot confirm the peer speaks our version. Silently
+		// downgrading to in-band draft-14 negotiation would be wrong, so fail
+		// instead (cf. moxygen issue #173).
+		return fmt.Errorf(
+			"webtransport: peer did not echo WT-Protocol; refusing to silently downgrade from offered protocols %v",
+			s.Protocols)
 	}
 	// For WebTransport (empty ALPN) or "moq-00", version stays 0 and is negotiated in SETUP
 
@@ -181,6 +201,22 @@ func (s *Session) RunContext(setupCtx context.Context, conn Connection) error {
 		return fmt.Errorf("moq setup handshake: %w", cause)
 	}
 	return nil
+}
+
+// offerSupportsInBandNegotiation reports whether any application protocol the
+// caller offered (s.Protocols) can be negotiated in-band via SETUP, i.e. is a
+// pre-draft-15 version such as "moq-00". When s.Protocols is empty the caller
+// stated no offer, so the historical in-band behavior is preserved.
+func (s *Session) offerSupportsInBandNegotiation() bool {
+	if len(s.Protocols) == 0 {
+		return true
+	}
+	for _, p := range s.Protocols {
+		if v, ok := wire.VersionFromALPN(p); ok && !v.NegotiatedViaALPN() {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) Close() error {

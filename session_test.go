@@ -594,3 +594,39 @@ func TestRemoteTrack_UpdateSubscription(t *testing.T) {
 		assert.Contains(t, err.Error(), "update function not available")
 	})
 }
+
+func TestOfferSupportsInBandNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		protocols []string
+		want      bool
+	}{
+		{"empty offer keeps historical behavior", nil, true},
+		{"draft-16 only refuses in-band", []string{"moqt-16"}, false},
+		{"moq-00 supports in-band", []string{"moq-00"}, true},
+		{"mixed offer supports in-band", []string{"moqt-16", "moq-00"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Session{Protocols: tc.protocols}
+			assert.Equal(t, tc.want, s.offerSupportsInBandNegotiation())
+		})
+	}
+}
+
+// TestRunContextRefusesWebTransportDowngrade reproduces the moxygen issue #173
+// condition: a WebTransport peer that does not echo a WT-Protocol response
+// header. When the client offered only draft-16+ protocols, RunContext must
+// refuse to silently downgrade to in-band draft-14 negotiation.
+func TestRunContextRefusesWebTransportDowngrade(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	conn := NewMockConnection(ctrl)
+	conn.EXPECT().Perspective().AnyTimes().Return(PerspectiveClient)
+	conn.EXPECT().Protocol().AnyTimes().Return(ProtocolWebTransport)
+	conn.EXPECT().NegotiatedALPN().AnyTimes().Return("") // peer omitted WT-Protocol
+	conn.EXPECT().OpenStreamSync(gomock.Any()).Return(NewMockStream(ctrl), nil)
+
+	s := &Session{Protocols: []string{"moqt-16"}}
+	err := s.RunContext(context.Background(), conn)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "did not echo WT-Protocol")
+}
