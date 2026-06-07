@@ -1,6 +1,9 @@
 package moqtransport
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrorCode is a generic error codes
 type ErrorCode uint64
@@ -146,4 +149,16 @@ var (
 		code:    ErrorCodeProtocolViolation,
 		message: "invalid namespace length",
 	}
+	// errJoiningFetchInvalidFilter is returned (closing the session) when a
+	// Joining FETCH references a subscription whose Filter Type is not Largest
+	// Object (draft-16 §9.16.2).
+	errJoiningFetchInvalidFilter = ProtocolError{
+		code:    ErrorCodeProtocolViolation,
+		message: "joining fetch requires a subscription with filter type Largest Object",
+	}
 )
+
+// errInvalidJoiningFetchRange is an internal sentinel used by
+// resolveJoiningFetch to signal that the requested range is invalid; it is
+// reported to the peer as a FETCH_ERROR with INVALID_RANGE.
+var errInvalidJoiningFetchRange = errors.New("invalid joining fetch range")

@@ -790,9 +790,13 @@ func (s *Session) acceptSubscriptionWithOptions(id uint64, opts *SubscribeOkOpti
 		Parameters:    opts.Parameters.ToWire(),
 	}
 
-	// Set largest location if content exists and location is provided
+	// Set largest location if content exists and location is provided. Save a
+	// copy onto the localTrack: this is the "saved value from when the
+	// subscription started" used to resolve a Joining FETCH (draft-16 §9.16.2.1).
 	if opts.ContentExists && opts.LargestLocation != nil {
 		msg.LargestLocation = *opts.LargestLocation
+		loc := *opts.LargestLocation
+		lt.largestLocation = &loc
 	}
 
 	return s.controlStream.write(msg)
@@ -853,6 +857,12 @@ func (s *Session) Fetch(
 	}
 	for _, opt := range options {
 		opt(cfg)
+	}
+
+	// For a joining fetch the publisher derives namespace/track from the
+	// associated subscription, so callers must not also pass them here.
+	if cfg.fetchType != FetchTypeStandalone && (len(namespace) > 0 || track != "") {
+		return nil, errors.New("joining fetch must not specify namespace or track")
 	}
 
 	requestID, err := s.getRequestID()
@@ -1334,6 +1344,12 @@ func (s *Session) onSubscribe(msg *wire.SubscribeMessage) error {
 	lt := newLocalTrack(s.conn, m.RequestID, s.trackAliases.next(), func(code, count uint64, reason string) error {
 		return s.subscriptionDone(m.RequestID, code, count, reason)
 	}, s.Qlogger)
+	// Remember subscription properties so a later Joining FETCH can be resolved
+	// to this subscription's namespace, track and largest location.
+	lt.isSubscription = true
+	lt.namespace = msg.TrackNamespace
+	lt.trackName = string(msg.TrackName)
+	lt.filterType = msg.FilterType
 
 	if err := s.addLocalTrack(lt); err != nil {
 		code := ErrorCodeInternal
@@ -1486,11 +1502,89 @@ func (s *Session) onPublishDone(msg *wire.PublishDoneMessage) error {
 	return nil
 }
 
+// resolveJoiningFetch computes the namespace, track name and resolved
+// [start, end) location range of a Joining FETCH from its associated
+// subscription, per draft-16 §9.16.2.1. The caller must already have verified
+// that sub.isSubscription is true, sub.filterType is FilterTypeLatestObject and
+// sub.largestLocation is non-nil. The returned EndLocation uses the equivalent
+// Standalone Fetch encoding (Largest.Object + 1, exclusive); the last object
+// actually included is the subscription's largest location.
+func resolveJoiningFetch(sub *localTrack, fetchType, joiningStart uint64) (namespace []string, track string, start, end Location, err error) {
+	largest := *sub.largestLocation
+	end = Location{Group: largest.Group, Object: largest.Object + 1}
+	switch fetchType {
+	case wire.FetchTypeRelativeJoining:
+		startGroup := uint64(0)
+		if joiningStart <= largest.Group {
+			startGroup = largest.Group - joiningStart
+		}
+		// Otherwise the offset reaches before group 0; clamp to group 0, which
+		// matches the "fill the preceding groups" intent.
+		start = Location{Group: startGroup, Object: 0}
+	case wire.FetchTypeAbsoluteJoining:
+		if joiningStart > largest.Group {
+			err = errInvalidJoiningFetchRange
+			return
+		}
+		start = Location{Group: joiningStart, Object: 0}
+	default:
+		err = errInvalidJoiningFetchRange
+		return
+	}
+	return sub.namespace, sub.trackName, start, end, nil
+}
+
 func (s *Session) onFetch(msg *wire.FetchMessage) error {
-	if msg.FetchType == wire.FetchTypeStandalone {
+	// Resolve the request into a concrete namespace, track and [start, end)
+	// range. Standalone fetches carry these on the wire; joining fetches are
+	// resolved from the associated subscription (draft-16 §9.16.2) so the
+	// FetchHandler can treat every fetch uniformly.
+	namespace := []string(msg.TrackNamespace)
+	track := string(msg.TrackName)
+	start := Location{Group: msg.StartGroup, Object: msg.StartObject}
+	end := Location{Group: msg.EndGroup, Object: msg.EndObject}
+
+	switch msg.FetchType {
+	case wire.FetchTypeStandalone:
 		if len(msg.TrackNamespace) == 0 || len(msg.TrackNamespace) > 32 {
 			return errInvalidNamespaceLength
 		}
+	case wire.FetchTypeRelativeJoining, wire.FetchTypeAbsoluteJoining:
+		sub, ok := s.localTracks.findByID(msg.JoiningSubscribeID)
+		if !ok || !sub.isSubscription {
+			return s.controlStream.write(&wire.FetchErrorMessage{
+				RequestID:    msg.RequestID,
+				ErrorCode:    uint64(ErrorCodeFetchInvalidJoiningSubscribeID),
+				ReasonPhrase: "unknown joining request id",
+			})
+		}
+		if sub.filterType != wire.FilterTypeLatestObject {
+			// Joining FETCH is only permitted on a Largest Object subscription;
+			// any other filter is a session-fatal PROTOCOL_VIOLATION.
+			return errJoiningFetchInvalidFilter
+		}
+		if sub.largestLocation == nil {
+			return s.controlStream.write(&wire.FetchErrorMessage{
+				RequestID:    msg.RequestID,
+				ErrorCode:    uint64(ErrorCodeFetchInvalidRange),
+				ReasonPhrase: "no content for joining fetch",
+			})
+		}
+		var rerr error
+		namespace, track, start, end, rerr = resolveJoiningFetch(sub, msg.FetchType, msg.JoiningStart)
+		if rerr != nil {
+			return s.controlStream.write(&wire.FetchErrorMessage{
+				RequestID:    msg.RequestID,
+				ErrorCode:    uint64(ErrorCodeFetchInvalidRange),
+				ReasonPhrase: rerr.Error(),
+			})
+		}
+	default:
+		return s.controlStream.write(&wire.FetchErrorMessage{
+			RequestID:    msg.RequestID,
+			ErrorCode:    uint64(ErrorCodeFetchInternal),
+			ReasonPhrase: "unknown fetch type",
+		})
 	}
 
 	lt := newLocalTrack(s.conn, msg.RequestID, s.trackAliases.next(), nil, s.Qlogger)
@@ -1511,10 +1605,10 @@ func (s *Session) onFetch(msg *wire.FetchMessage) error {
 		fm := &FetchMessage{
 			RequestID:          msg.RequestID,
 			FetchType:          msg.FetchType,
-			Namespace:          msg.TrackNamespace,
-			Track:              string(msg.TrackName),
-			StartLocation:      Location{Group: msg.StartGroup, Object: msg.StartObject},
-			EndLocation:        Location{Group: msg.EndGroup, Object: msg.EndObject},
+			Namespace:          namespace,
+			Track:              track,
+			StartLocation:      start,
+			EndLocation:        end,
 			JoiningSubscribeID: msg.JoiningSubscribeID,
 			JoiningStart:       msg.JoiningStart,
 			SubscriberPriority: msg.SubscriberPriority,
@@ -1525,8 +1619,8 @@ func (s *Session) onFetch(msg *wire.FetchMessage) error {
 	} else {
 		m := &Message{
 			Method:    MessageFetch,
-			Namespace: msg.TrackNamespace,
-			Track:     string(msg.TrackName),
+			Namespace: namespace,
+			Track:     track,
 			RequestID: msg.RequestID,
 		}
 		s.Handler.Handle(frw, m)
