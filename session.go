@@ -1025,6 +1025,17 @@ func (s *Session) acceptAnnouncement(requestID uint64) error {
 }
 
 func (s *Session) rejectAnnouncement(requestID uint64, c uint64, r string) error {
+	if s.version.NegotiatedViaALPN() {
+		// Draft-16: a PUBLISH_NAMESPACE is rejected with the generic
+		// REQUEST_ERROR (0x05). ANNOUNCE_ERROR's draft-14 code (0x08) is
+		// NAMESPACE in draft-16, so sending it would be unparseable by the peer.
+		return s.controlStream.write(&wire.SubscribeErrorMessage{
+			WireVersion:  s.version,
+			RequestID:    requestID,
+			ErrorCode:    c,
+			ReasonPhrase: r,
+		})
+	}
 	return s.controlStream.write(&wire.AnnounceErrorMessage{
 		RequestID:    requestID,
 		ErrorCode:    c,
@@ -1365,20 +1376,30 @@ func (s *Session) onSubscribeOk(msg *wire.SubscribeOkMessage) error {
 }
 
 func (s *Session) onSubscribeError(msg *wire.SubscribeErrorMessage) error {
-	sub, ok := s.remoteTracks.reject(msg.RequestID)
-	if !ok {
-		return errUnknownRequestID
-	}
 	err := ProtocolError{
 		code:    ErrorCode(msg.ErrorCode),
 		message: msg.ReasonPhrase,
 	}
-	select {
-	case sub.responseChan <- err:
-	default:
-		s.logger.Info("dropping unhandled SubscribeError response")
+	// On draft-16 this message is the generic REQUEST_ERROR (0x05), which may
+	// resolve a SUBSCRIBE or a pending PUBLISH_NAMESPACE (announce); dispatch by
+	// request ID. On draft-14 only subscribes arrive here.
+	if sub, ok := s.remoteTracks.reject(msg.RequestID); ok {
+		select {
+		case sub.responseChan <- err:
+		default:
+			s.logger.Info("dropping unhandled SubscribeError response")
+		}
+		return nil
 	}
-	return nil
+	if a, ok := s.outgoingAnnouncements.reject(msg.RequestID); ok {
+		select {
+		case a.response <- err:
+		default:
+			s.logger.Info("dropping unhandled announce error response")
+		}
+		return nil
+	}
+	return errUnknownRequestID
 }
 
 func (s *Session) onSubscribeUpdate(msg *wire.SubscribeUpdateMessage) error {

@@ -19,7 +19,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// connect establishes a QUIC connection negotiating MoQ draft-14 (ALPN "moq-00").
 func connect(t *testing.T) (server, client *quic.Conn, cancel func()) {
+	return connectALPN(t, "moq-00")
+}
+
+// connectALPN establishes a QUIC connection with the given client ALPN, letting
+// tests choose the negotiated MoQ draft ("moq-00" → draft-14, "moqt-16" →
+// draft-16).
+func connectALPN(t *testing.T, clientALPN string) (server, client *quic.Conn, cancel func()) {
 	tlsConfig, err := generateTLSConfig()
 	assert.NoError(t, err)
 	listener, err := quic.ListenAddr("localhost:0", tlsConfig, &quic.Config{
@@ -29,7 +37,7 @@ func connect(t *testing.T) (server, client *quic.Conn, cancel func()) {
 
 	clientConn, err := quic.DialAddr(context.Background(), fmt.Sprintf("localhost:%d", listener.Addr().(*net.UDPAddr).Port), &tls.Config{
 		InsecureSkipVerify: true,
-		NextProtos:         []string{"moq-00"},
+		NextProtos:         []string{clientALPN},
 	}, &quic.Config{
 		EnableDatagrams: true,
 	})
@@ -133,6 +141,6 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"moq-00", "h3"},
+		NextProtos:   []string{"moqt-16", "moq-00", "h3"},
 	}, nil
 }
