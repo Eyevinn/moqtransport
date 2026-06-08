@@ -690,9 +690,17 @@ func (s *Session) Subscribe(
 		return nil, err
 	}
 
+	// Fail if the session ends before a response arrives, instead of blocking on
+	// the caller's context. A nil sessionDone (session not running) never fires.
+	var sessionDone <-chan struct{}
+	if s.ctx != nil {
+		sessionDone = s.ctx.Done()
+	}
 	select {
 	case <-ctx.Done():
 		err = context.Cause(ctx)
+	case <-sessionDone:
+		err = context.Cause(s.ctx)
 	case err = <-rt.responseChan:
 	}
 	if err != nil {
@@ -887,9 +895,17 @@ func (s *Session) Fetch(
 		_, _ = s.remoteTracks.reject(requestID)
 		return nil, err
 	}
+	// Fail if the session ends before a response arrives, instead of blocking on
+	// the caller's context. A nil sessionDone (session not running) never fires.
+	var sessionDone <-chan struct{}
+	if s.ctx != nil {
+		sessionDone = s.ctx.Done()
+	}
 	select {
 	case <-ctx.Done():
 		err = context.Cause(ctx)
+	case <-sessionDone:
+		err = context.Cause(s.ctx)
 	case err = <-rt.responseChan:
 	}
 	if err != nil {
@@ -1004,9 +1020,19 @@ func (s *Session) Announce(ctx context.Context, namespace []string) error {
 		_, _ = s.outgoingAnnouncements.reject(a.requestID)
 		return err
 	}
+	// Fail if the session ends (e.g. the control stream failed) before a
+	// response arrives, instead of blocking on the caller's context forever. A
+	// nil sessionDone (session not running) never fires, preserving the prior
+	// behaviour for callers that drive the session without Run.
+	var sessionDone <-chan struct{}
+	if s.ctx != nil {
+		sessionDone = s.ctx.Done()
+	}
 	select {
 	case <-ctx.Done():
 		return context.Cause(ctx)
+	case <-sessionDone:
+		return context.Cause(s.ctx)
 	case res := <-a.response:
 		return res
 	}
