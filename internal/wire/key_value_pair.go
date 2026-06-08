@@ -118,4 +118,3 @@ func (p *KeyValuePair) parseDelta(data []byte, prevType uint64) (int, error) {
 	parsed += n
 	return parsed, err
 }
-

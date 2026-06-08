@@ -62,9 +62,9 @@ func setup(t *testing.T, sConn, cConn *quic.Conn, handler moqtransport.Handler) 
 }
 
 type sessionOptions struct {
-	handler             moqtransport.Handler
-	subscribeHandler    moqtransport.SubscribeHandler
-	fetchHandler        moqtransport.FetchHandler
+	handler          moqtransport.Handler
+	subscribeHandler moqtransport.SubscribeHandler
+	fetchHandler     moqtransport.FetchHandler
 }
 
 func setupWithHandlers(t *testing.T, sConn, cConn *quic.Conn, handler moqtransport.Handler, subscribeHandler moqtransport.SubscribeHandler) (

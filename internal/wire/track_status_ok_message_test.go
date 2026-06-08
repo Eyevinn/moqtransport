@@ -87,8 +87,8 @@ func TestParseTrackStatusOkMessage(t *testing.T) {
 		},
 		{
 			data: []byte{
-				0x01, // RequestID
-				0x00, // TrackAlias
+				0x01,       // RequestID
+				0x00,       // TrackAlias
 				0x40, 0x64, // Expires (100ms as 2-byte varint)
 				0x01, // GroupOrder
 				0x01, // ContentExists = true
