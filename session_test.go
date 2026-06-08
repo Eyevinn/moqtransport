@@ -388,6 +388,72 @@ func TestSession(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("announce_aborts_when_session_ends", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		cs := NewMockControlMessageStream(ctrl)
+		conn := NewMockConnection(ctrl)
+		conn.EXPECT().Perspective().AnyTimes().Return(PerspectiveClient)
+		conn.EXPECT().Protocol().AnyTimes().Return(ProtocolQUIC)
+
+		s := newSession(conn, cs, nil)
+		s.handshakeDone.Store(true)
+		sessCtx, sessCancel := context.WithCancelCause(context.Background())
+		s.ctx = sessCtx
+
+		// The peer never responds; the session ends instead. Announce must
+		// return rather than block on the caller's context forever.
+		cs.EXPECT().write(gomock.Any()).DoAndReturn(func(_ wire.ControlMessage) error {
+			sessCancel(assert.AnError)
+			return nil
+		})
+		err := s.Announce(context.Background(), []string{"namespace"})
+		assert.ErrorIs(t, err, assert.AnError)
+	})
+
+	t.Run("subscribe_aborts_when_session_ends", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		cs := NewMockControlMessageStream(ctrl)
+		conn := NewMockConnection(ctrl)
+		conn.EXPECT().Perspective().AnyTimes().Return(PerspectiveClient)
+		conn.EXPECT().Protocol().AnyTimes().Return(ProtocolQUIC)
+
+		s := newSession(conn, cs, nil)
+		s.requestIDs.max = 1
+		s.handshakeDone.Store(true)
+		sessCtx, sessCancel := context.WithCancelCause(context.Background())
+		s.ctx = sessCtx
+
+		cs.EXPECT().write(gomock.Any()).MinTimes(1).DoAndReturn(func(_ wire.ControlMessage) error {
+			sessCancel(assert.AnError)
+			return nil
+		})
+		_, err := s.Subscribe(context.Background(), []string{"namespace"}, "track")
+		assert.ErrorIs(t, err, assert.AnError)
+	})
+
+	t.Run("fetch_aborts_when_session_ends", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		cs := NewMockControlMessageStream(ctrl)
+		conn := NewMockConnection(ctrl)
+		conn.EXPECT().Perspective().AnyTimes().Return(PerspectiveClient)
+		conn.EXPECT().Protocol().AnyTimes().Return(ProtocolQUIC)
+
+		s := newSession(conn, cs, nil)
+		s.requestIDs.max = 1
+		s.handshakeDone.Store(true)
+		sessCtx, sessCancel := context.WithCancelCause(context.Background())
+		s.ctx = sessCtx
+
+		// The FETCH write cancels the session; the resulting error path also
+		// closes the track, which writes a FETCH_CANCEL, so allow >= 1 writes.
+		cs.EXPECT().write(gomock.Any()).MinTimes(1).DoAndReturn(func(_ wire.ControlMessage) error {
+			sessCancel(assert.AnError)
+			return nil
+		})
+		_, err := s.Fetch(context.Background(), []string{"namespace"}, "track")
+		assert.ErrorIs(t, err, assert.AnError)
+	})
+
 	t.Run("sends_announce_ok", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		cs := NewMockControlMessageStream(ctrl)
