@@ -27,14 +27,14 @@ func TestTrackStatusMessageAppend(t *testing.T) {
 			},
 			buf: []byte{},
 			expect: []byte{
-				0x00,                                     // RequestID
-				0x01, 0x02, 'n', 's',                     // TrackNamespace (tuple: 1 element, len 2, "ns")
-				0x05, 't', 'r', 'a', 'c', 'k',           // TrackName
-				0x00,                                     // SubscriberPriority
-				0x00,                                     // GroupOrder
-				0x01,                                     // Forward
-				0x02,                                     // FilterType (LatestObject)
-				0x00,                                     // Number of Parameters
+				0x00,                 // RequestID
+				0x01, 0x02, 'n', 's', // TrackNamespace (tuple: 1 element, len 2, "ns")
+				0x05, 't', 'r', 'a', 'c', 'k', // TrackName
+				0x00, // SubscriberPriority
+				0x00, // GroupOrder
+				0x01, // Forward
+				0x02, // FilterType (LatestObject)
+				0x00, // Number of Parameters
 			},
 		},
 	}
@@ -59,14 +59,14 @@ func TestParseTrackStatusMessage(t *testing.T) {
 		},
 		{
 			data: []byte{
-				0x00,                                     // RequestID
-				0x01, 0x02, 'n', 's',                     // TrackNamespace
-				0x05, 't', 'r', 'a', 'c', 'k',           // TrackName
-				0x00,                                     // SubscriberPriority
-				0x00,                                     // GroupOrder
-				0x01,                                     // Forward
-				0x02,                                     // FilterType (LatestObject)
-				0x00,                                     // Number of Parameters
+				0x00,                 // RequestID
+				0x01, 0x02, 'n', 's', // TrackNamespace
+				0x05, 't', 'r', 'a', 'c', 'k', // TrackName
+				0x00, // SubscriberPriority
+				0x00, // GroupOrder
+				0x01, // Forward
+				0x02, // FilterType (LatestObject)
+				0x00, // Number of Parameters
 			},
 			expect: &TrackStatusMessage{
 				RequestID:          0,

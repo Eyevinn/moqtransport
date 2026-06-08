@@ -71,10 +71,10 @@ func (g GroupOrder) String() string {
 
 // Draft-16 message parameter type keys for fields moved from SUBSCRIBE body
 const (
-	SubscriberPriorityParamKey   = 0x20
-	SubscriptionFilterParamKey   = 0x21
-	GroupOrderParamKey           = 0x22
-	ForwardParamKey              = 0x10
+	SubscriberPriorityParamKey = 0x20
+	SubscriptionFilterParamKey = 0x21
+	GroupOrderParamKey         = 0x22
+	ForwardParamKey            = 0x10
 )
 
 type SubscribeMessage struct {
