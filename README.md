@@ -8,23 +8,24 @@ This is a fork of [github.com/mengelbart/moqtransport](https://github.com/mengel
 
 ## Overview
 
-This library implements the Media over QUIC Transport (MoQT) protocol as defined in [draft-ietf-moq-transport-14](https://www.ietf.org/archive/id/draft-ietf-moq-transport-14.txt). MoQT is designed to operate over QUIC or WebTransport for efficient media delivery with a publish/subscribe model.
+This library implements the Media over QUIC Transport (MoQT) protocol as defined in [draft-ietf-moq-transport-14](https://www.ietf.org/archive/id/draft-ietf-moq-transport-14.txt) and [draft-ietf-moq-transport-16](https://www.ietf.org/archive/id/draft-ietf-moq-transport-16.txt), with the protocol version negotiated via ALPN. MoQT is designed to operate over QUIC or WebTransport for efficient media delivery with a publish/subscribe model.
 
 ### Implementation Status
 
 This code, as well as the specification, is work in progress.
-The implementation currently covers most aspects of the MoQT specification (draft-14), including:
+The implementation currently covers most aspects of the MoQT specification (draft-14 and draft-16), including:
 
  Session establishment and initialization  
+ Version negotiation via ALPN (draft-14 and draft-16)  
  Control message encoding and handling  
  Data stream management  
  Track announcement and subscription  
+ FETCH, including object delivery on fetch streams  
  Error handling  
  Support for both QUIC and WebTransport  
 
 ### Areas for Future Development
 
- Implementation of FETCH
  Exposure of more parameters
  ...
 
