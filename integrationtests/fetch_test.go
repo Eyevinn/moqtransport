@@ -221,9 +221,11 @@ func TestFetch(t *testing.T) {
 		defer cancel()
 
 		fetchMsgCh := make(chan *moqtransport.FetchMessage, 1)
+		publisherCh := make(chan *moqtransport.FetchResponseWriter, 1)
 		fetchHandler := moqtransport.FetchHandlerFunc(func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
 			fetchMsgCh <- m
 			assert.NoError(t, w.Accept())
+			publisherCh <- w
 		})
 		_, ct, cancel := setupWithAllHandlers(t, sConn, cConn, sessionOptions{
 			subscribeHandler: acceptingSubscribeHandler(&moqtransport.Location{Group: 4, Object: 2}),
@@ -254,6 +256,27 @@ func TestFetch(t *testing.T) {
 		assert.Equal(t, "catalog", fm.Track)
 		assert.Equal(t, moqtransport.Location{Group: 4, Object: 0}, fm.StartLocation)
 		assert.Equal(t, moqtransport.Location{Group: 4, Object: 3}, fm.EndLocation)
+
+		// Deliver and read an object back over the draft-16 fetch stream to
+		// verify object delivery (not just control-message resolution) works.
+		var publisher *moqtransport.FetchResponseWriter
+		select {
+		case publisher = <-publisherCh:
+		case <-time.After(time.Second):
+			assert.FailNow(t, "timeout waiting for publisher")
+		}
+		fs, err := publisher.FetchStream()
+		assert.NoError(t, err)
+		_, err = fs.WriteObject(4, 0, 0, 0, []byte("joining-data-16"))
+		assert.NoError(t, err)
+		assert.NoError(t, fs.Close())
+
+		ctx2, cancelCtx2 := context.WithTimeout(context.Background(), time.Second)
+		defer cancelCtx2()
+		o, err := rt.ReadObject(ctx2)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(4), o.GroupID)
+		assert.Equal(t, []byte("joining-data-16"), o.Payload)
 	})
 
 	t.Run("absolute_joining_fetch", func(t *testing.T) {
