@@ -1394,6 +1394,8 @@ func (s *Session) onSubscribeOk(msg *wire.SubscribeOkMessage) error {
 		// TODO: Protocol violation
 		return err
 	}
+	rt.trackAlias = msg.TrackAlias
+	rt.hasTrackAlias = true
 
 	// Store complete subscription information from SUBSCRIBE_OK
 	rt.expires = msg.Expires
