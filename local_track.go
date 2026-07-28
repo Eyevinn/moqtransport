@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Eyevinn/moqtransport/internal/slices"
 	"github.com/Eyevinn/moqtransport/internal/wire"
@@ -24,7 +25,7 @@ type localTrack struct {
 	conn            Connection
 	requestID       uint64
 	trackAlias      uint64
-	subgroupCount   uint64
+	subgroupCount   atomic.Uint64
 	fetchStreamLock sync.Mutex
 	fetchStream     *FetchStream
 	ctx             context.Context
@@ -49,7 +50,7 @@ func newLocalTrack(conn Connection, requestID, trackAlias uint64, onSubscribeDon
 		conn:            conn,
 		requestID:       requestID,
 		trackAlias:      trackAlias,
-		subgroupCount:   0,
+		subgroupCount:   atomic.Uint64{},
 		fetchStreamLock: sync.Mutex{},
 		fetchStream:     nil,
 		ctx:             ctx,
@@ -142,14 +143,14 @@ func (p *localTrack) openSubgroup(groupID, subgroupID uint64, priority uint8, op
 	if err != nil {
 		return nil, err
 	}
-	p.subgroupCount++
+	p.subgroupCount.Add(1)
 	return newSubgroup(stream, p.trackAlias, groupID, subgroupID, priority, o.endOfGroup, p.qlogger)
 }
 
 func (s *localTrack) close(code uint64, reason string) error {
 	s.cancelCtx(ErrSubscriptionDone)
 	if s.subscribeDone != nil {
-		return s.subscribeDone(code, s.subgroupCount, reason)
+		return s.subscribeDone(code, s.subgroupCount.Load(), reason)
 	}
 	return nil
 }
