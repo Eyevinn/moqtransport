@@ -28,6 +28,12 @@ func (e ErrSubscribeDone) Error() string {
 type RemoteTrack struct {
 	requestID uint64
 
+	// trackAlias is written on SUBSCRIBE_OK, before the pending
+	// subscribe resolves — so it is safely readable once Subscribe
+	// returns.
+	trackAlias    uint64
+	hasTrackAlias bool
+
 	// Expires, groupOrder, ..., parameters are returned in the SUBSCRIBE_OK.
 	// They are not updated when sending a SUBSCRIBE_UPDATE message.
 	expires         time.Duration
@@ -53,6 +59,14 @@ type RemoteTrack struct {
 // RequestID returns the request ID of the subscription request.
 func (t *RemoteTrack) RequestID() uint64 {
 	return t.requestID
+}
+
+// TrackAlias returns the publisher-assigned track alias delivered in
+// SUBSCRIBE_OK — the value identifying this track in object datagrams
+// (and in Session.DatagramReceiveHandler). Valid once Subscribe has
+// returned; ok is false before the SUBSCRIBE_OK arrived.
+func (t *RemoteTrack) TrackAlias() (alias uint64, ok bool) {
+	return t.trackAlias, t.hasTrackAlias
 }
 
 // Expires returns the duration for which the subscription is valid.
