@@ -153,7 +153,7 @@ func (t *RemoteTrack) readStream(parser objectMessageParser) error {
 			// TODO
 			return errors.New("failed to copy object payload: copied less bytes than expected")
 		}
-		t.push(&Object{
+		t.pushBlocking(&Object{
 			GroupID:          m.GroupID,
 			SubGroupID:       m.SubgroupID,
 			ObjectID:         m.ObjectID,
@@ -162,6 +162,18 @@ func (t *RemoteTrack) readStream(parser objectMessageParser) error {
 		})
 	}
 	return nil
+}
+
+// pushBlocking delivers an object read from an ordered, reliable stream.
+// Blocking (rather than dropping) lets QUIC stream flow control apply
+// backpressure to the sender; dropping would silently violate the
+// ordered-delivery semantics applications rely on for stream tracks.
+// Datagram delivery keeps the dropping push: loss is normal there.
+func (t *RemoteTrack) pushBlocking(o *Object) {
+	select {
+	case t.buffer <- o:
+	case <-t.doneCtx.Done():
+	}
 }
 
 func (t *RemoteTrack) done(status uint64, reason string) {
