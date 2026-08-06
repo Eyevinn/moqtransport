@@ -57,6 +57,9 @@ func (h *moqHandler) runClient(ctx context.Context, wt bool) error {
 func (h *moqHandler) runServer(ctx context.Context) error {
 	listener, err := quic.ListenAddr(h.addr, h.tlsConfig, &quic.Config{
 		EnableDatagrams: true,
+		// Required by webtransport-go v0.12.0 (draft-ietf-webtrans-http3-16):
+		// Server.ServeQUICConn rejects connections without it.
+		EnableStreamResetPartialDelivery: true,
 	})
 	if err != nil {
 		return err

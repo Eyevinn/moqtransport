@@ -174,7 +174,7 @@ func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error)
 }
 
 func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection, error) {
-	dialer := webtransport.Dialer{
+	dialer := webtransport.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
