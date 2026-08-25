@@ -63,8 +63,8 @@ func (t *RemoteTrack) RequestID() uint64 {
 
 // TrackAlias returns the publisher-assigned track alias delivered in
 // SUBSCRIBE_OK — the value identifying this track in object datagrams
-// (and in Session.DatagramReceiveHandler). Valid once Subscribe has
-// returned; ok is false before the SUBSCRIBE_OK arrived.
+// and subgroup stream headers. Valid once Subscribe has returned; ok is
+// false before the SUBSCRIBE_OK arrived.
 func (t *RemoteTrack) TrackAlias() (alias uint64, ok bool) {
 	return t.trackAlias, t.hasTrackAlias
 }
@@ -140,19 +140,23 @@ func (t *RemoteTrack) Close() error {
 	return nil
 }
 
-func (t *RemoteTrack) readFetchStream(parser objectMessageParser) error {
+func (t *RemoteTrack) readFetchStream(ctx context.Context, parser objectMessageParser) error {
 	if t.fetchCount.Add(1) > 1 {
 		return errTooManyFetchStreams
 	}
-	return t.readStream(parser)
+	return t.readStream(ctx, parser)
 }
 
-func (t *RemoteTrack) readSubgroupStream(parser objectMessageParser) error {
+func (t *RemoteTrack) readSubgroupStream(ctx context.Context, parser objectMessageParser) error {
 	t.subGroupCount.Add(1)
-	return t.readStream(parser)
+	return t.readStream(ctx, parser)
 }
 
-func (t *RemoteTrack) readStream(parser objectMessageParser) error {
+// readStream reads objects from a subgroup or fetch stream until EOF. ctx
+// is the session context: when the session closes, a stream reader blocked
+// on delivery must exit rather than wait for a consumer that will never
+// come.
+func (t *RemoteTrack) readStream(ctx context.Context, parser objectMessageParser) error {
 	for m, err := range parser.Messages() {
 		if err != nil {
 			if err == io.EOF {
@@ -167,13 +171,15 @@ func (t *RemoteTrack) readStream(parser objectMessageParser) error {
 			// TODO
 			return errors.New("failed to copy object payload: copied less bytes than expected")
 		}
-		t.pushBlocking(&Object{
+		if err := t.pushBlocking(ctx, &Object{
 			GroupID:          m.GroupID,
 			SubGroupID:       m.SubgroupID,
 			ObjectID:         m.ObjectID,
 			ExtensionHeaders: FromWire(m.ObjectExtensionHeaders),
 			Payload:          payload,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -183,10 +189,19 @@ func (t *RemoteTrack) readStream(parser objectMessageParser) error {
 // backpressure to the sender; dropping would silently violate the
 // ordered-delivery semantics applications rely on for stream tracks.
 // Datagram delivery keeps the dropping push: loss is normal there.
-func (t *RemoteTrack) pushBlocking(o *Object) {
+//
+// It returns when the object is delivered, the subscription ends
+// (SUBSCRIBE_DONE), or the session context is cancelled — the last so a
+// stream reader cannot outlive Session.Close when the application has
+// stopped draining the track.
+func (t *RemoteTrack) pushBlocking(ctx context.Context, o *Object) error {
 	select {
 	case t.buffer <- o:
+		return nil
 	case <-t.doneCtx.Done():
+		return context.Cause(t.doneCtx)
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
 }
 
