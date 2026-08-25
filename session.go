@@ -307,18 +307,18 @@ func (s *Session) readDatagrams(ctx context.Context) error {
 
 func (s *Session) handleUniStream(ctx context.Context, parser objectMessageParser) error {
 	if parser.Type() == wire.StreamTypeFetch {
-		return s.readFetchStream(parser)
+		return s.readFetchStream(ctx, parser)
 	}
 	return s.readSubgroupStream(ctx, parser)
 }
 
-func (s *Session) readFetchStream(parser objectMessageParser) error {
+func (s *Session) readFetchStream(ctx context.Context, parser objectMessageParser) error {
 	s.logger.Info("reading fetch stream")
 	rt, ok := s.remoteTrackByRequestID(parser.Identifier())
 	if !ok {
 		return errUnknownRequestID
 	}
-	return rt.readFetchStream(parser)
+	return rt.readFetchStream(ctx, parser)
 }
 
 func (s *Session) readSubgroupStream(ctx context.Context, parser objectMessageParser) error {
@@ -327,7 +327,7 @@ func (s *Session) readSubgroupStream(ctx context.Context, parser objectMessagePa
 	if !ok {
 		return errUnknownRequestID
 	}
-	return rt.readSubgroupStream(parser)
+	return rt.readSubgroupStream(ctx, parser)
 }
 
 func (s *Session) receiveDatagram(msg *wire.ObjectDatagramMessage) error {
