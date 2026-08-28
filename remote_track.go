@@ -121,6 +121,18 @@ func newRemoteTrack(requestID uint64, unsubscribeFunc func() error, updateFunc f
 }
 
 // ReadObject returns the next object received from the peer.
+//
+// How delivery behaves when the caller falls behind depends on how the
+// object arrived. Objects read from subgroup and fetch streams are delivered
+// with backpressure: the reader of that stream waits, QUIC stream flow
+// control slows the sender, and the library drops nothing. Objects that
+// arrived as datagrams are dropped once the delivery buffer is full, which
+// matches the lossy delivery datagrams already have.
+//
+// A caller that stops reading therefore stalls the stream readers of that
+// track, and enough stalled streams can make connection-level flow control
+// slow other tracks on the same session. Call Close to unsubscribe when the
+// objects are no longer wanted.
 func (t *RemoteTrack) ReadObject(ctx context.Context) (*Object, error) {
 	select {
 	case <-ctx.Done():
