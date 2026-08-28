@@ -55,11 +55,19 @@ func writeSubgroupObjects(t *testing.T, publisher moqtransport.Publisher, n int)
 	}()
 }
 
-// goroutineParkedIn reports whether any goroutine's stack mentions fn.
+// goroutineParkedIn reports whether any goroutine's stack mentions fn. The
+// buffer grows until the whole dump fits: runtime.Stack truncates silently,
+// and a truncated dump would let the assertions below pass without ever
+// having seen the goroutine they are about.
 func goroutineParkedIn(fn string) bool {
 	buf := make([]byte, 1<<20)
-	n := runtime.Stack(buf, true)
-	return bytes.Contains(buf[:n], []byte(fn))
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return bytes.Contains(buf[:n], []byte(fn))
+		}
+		buf = make([]byte, 2*len(buf))
+	}
 }
 
 func TestSubgroupBackpressure(t *testing.T) {
