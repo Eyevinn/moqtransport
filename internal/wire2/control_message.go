@@ -151,6 +151,21 @@ const (
 	StreamTypePadding     StreamType = 0x132B3E28
 )
 
+func (t StreamType) String() string {
+	switch t {
+	case StreamTypeFetchHeader:
+		return "FETCH_HEADER"
+	case StreamTypeSetup:
+		return "SETUP"
+	case StreamTypePadding:
+		return "PADDING"
+	}
+	if t.IsSubgroupHeader() {
+		return fmt.Sprintf("SUBGROUP_HEADER(%#02x)", uint64(t))
+	}
+	return fmt.Sprintf("unknown stream type: %#x", uint64(t))
+}
+
 // A SUBGROUP_HEADER stream type is not a single codepoint but the bit pattern
 // 0b0XX1XXXX -- bit 7 clear and bit 4 set, i.e. 0x10-0x1F, 0x30-0x3F, 0x50-0x5F
 // and 0x70-0x7F -- so it is matched by mask rather than compared.
