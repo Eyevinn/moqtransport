@@ -32,6 +32,9 @@ func (m *allTags) appendV18(buf []byte) ([]byte, error) {
 		return nil, err
 	}
 	buf = m.Properties.appendDelta(buf)
+	if m.Redirect != nil {
+		buf = m.Redirect.append(buf)
+	}
 	return buf, nil
 }
 
@@ -127,6 +130,15 @@ func (m *allTags) parseV18(data []byte) error {
 		return err
 	}
 	data = data[n:]
+
+	if len(data) > 0 {
+		m.Redirect = &Redirect{}
+		n, err = m.Redirect.parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+	}
 
 	if len(data) > 0 {
 		return errTrailingBytes

@@ -1,6 +1,6 @@
 package wire2
 
-//go:generate go run ../../wiregen -draft 18 -dir . -pkg wire2
+//go:generate go run ../../wiregen -draft 18 -decl messages_v18.go -dir .
 
 // This file declares the draft-ietf-moq-transport-18 message set. Each struct
 // mirrors one figure in Section 10 or 11 of the draft; the `proto` tags drive
