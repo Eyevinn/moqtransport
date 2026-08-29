@@ -42,6 +42,79 @@ var (
 	// errControlMessageTooLong means a message body would not fit the 16-bit
 	// Message Length field, so it cannot be framed at all.
 	errControlMessageTooLong = errors.New("control message body exceeds 65535 bytes")
+
+	// errReservedSubgroupIDMode means a SUBGROUP_HEADER stream type used
+	// SUBGROUP_ID_MODE 0b11, which Section 11.4.2 reserves for future use.
+	errReservedSubgroupIDMode = errors.New("subgroup header uses the reserved subgroup ID mode")
+
+	// errInvalidObjectStatus means an Object Status was not one of the three
+	// values Section 11.2.1.1 defines.
+	errInvalidObjectStatus = errors.New("invalid object status")
+
+	// errPropertiesOnNonNormalObject means an Object with a status other than
+	// Normal carried Properties, which Section 11.2.1.2 forbids.
+	errPropertiesOnNonNormalObject = errors.New("properties on an object whose status is not Normal")
+
+	// errObjectIDOverflow means a delta-encoded Object ID would exceed 2^64-1.
+	errObjectIDOverflow = errors.New("object ID delta overflows")
+
+	// errObjectIDNotIncreasing means an Object was written with an ID at or
+	// below the previous Object's on the same stream. The delta encoding has
+	// no way to express it.
+	errObjectIDNotIncreasing = errors.New("object IDs on a stream must increase")
+
+	// errStatusWithPayload means an Object carried both a payload and a status
+	// other than Normal. Section 11.2.1.1 requires a non-zero status to have
+	// an empty payload, and the wire format has nowhere to put the status of
+	// an Object that has one.
+	errStatusWithPayload = errors.New("object with a payload cannot carry a status")
+
+	// errPropertiesNotDeclared means an Object carried Properties on a stream
+	// whose header did not set the PROPERTIES bit. The bit covers the whole
+	// stream, so this cannot be encoded.
+	errPropertiesNotDeclared = errors.New("properties on a stream whose header did not declare them")
+
+	// errDatagramStatusEndOfGroup means a datagram set both the STATUS and
+	// END_OF_GROUP bits. An Object status message cannot signal end of group,
+	// which rules out eight of the datagram types outright (Section 11.3.1).
+	errDatagramStatusEndOfGroup = errors.New("datagram sets both the status and end-of-group bits")
+
+	// errEmptyDatagramProperties means a datagram set the PROPERTIES bit and
+	// then gave a Properties Length of 0.
+	errEmptyDatagramProperties = errors.New("datagram declares properties but carries none")
+
+	// errUnexpectedEndOfDatagram means a datagram ended part-way through a
+	// field. A datagram is a single message with no continuation.
+	errUnexpectedEndOfDatagram = errors.New("datagram ended mid-field")
+
+	// errInvalidSerializationFlags means a FETCH Object's Serialization Flags
+	// were 128 or more and not one of the End of Range values in Table 7.
+	errInvalidSerializationFlags = errors.New("invalid fetch object serialization flags")
+
+	// errFetchObjectNeedsPrior means a FETCH Object used a flag referring to
+	// the prior Object when there is no prior Object to refer to. The first
+	// Object on a stream MUST carry both deltas, and Subgroup ID and Priority
+	// cannot be inherited across an End of Range indicator that follows none.
+	errFetchObjectNeedsPrior = errors.New("fetch object refers to a prior object that does not exist")
+
+	// errEndOfRangeWithPayload means an End of Range indicator declared a
+	// payload. It stands in for Objects that were not serialized, so it has
+	// none.
+	errEndOfRangeWithPayload = errors.New("end of range indicator carries a payload")
+
+	// errGroupIDOverflow means a Group ID Delta moved the Group ID outside
+	// [0, 2^64-1] in the Group Order's direction.
+	errGroupIDOverflow = errors.New("group ID delta overflows")
+
+	// errSubgroupIDOverflow means "prior Subgroup ID plus one" exceeded
+	// 2^64-1.
+	errSubgroupIDOverflow = errors.New("subgroup ID plus one overflows")
+
+	// errGroupIDNotAscending and errGroupIDNotDescending mean a FETCH response
+	// was written with Groups out of the order it declared. The Group ID Delta
+	// only moves one way, so the encoding cannot express it.
+	errGroupIDNotAscending  = errors.New("group IDs must ascend in an ascending fetch response")
+	errGroupIDNotDescending = errors.New("group IDs must descend in a descending fetch response")
 )
 
 // unknownControlMessageTypeError is returned for a message type that has no
