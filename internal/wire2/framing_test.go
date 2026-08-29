@@ -246,3 +246,40 @@ func TestReadStreamType(t *testing.T) {
 		assert.ErrorIs(t, err, io.EOF)
 	})
 }
+
+// Section 3.3 names the seven message types allowed to open a bidirectional
+// stream. The list is worth pinning down because the interesting failure is
+// not an unknown codepoint but a known one in the wrong place: REQUEST_OK is a
+// perfectly good message that may not start a request.
+func TestOpensRequestStream(t *testing.T) {
+	opens := []ControlMessageType{
+		ControlMessageTypeTrackStatus,
+		ControlMessageTypeSubscribe,
+		ControlMessageTypePublish,
+		ControlMessageTypeFetch,
+		ControlMessageTypePublishNamespace,
+		ControlMessageTypeSubscribeNamespace,
+		ControlMessageTypeSubscribeTracks,
+	}
+	for _, mt := range opens {
+		assert.True(t, mt.OpensRequestStream(), "%v should open a request stream", mt)
+	}
+
+	doesNot := []ControlMessageType{
+		ControlMessageTypeSetup,
+		ControlMessageTypeGoAway,
+		ControlMessageTypeRequestOk,
+		ControlMessageTypeRequestError,
+		ControlMessageTypeRequestUpdate,
+		ControlMessageTypeSubscribeOk,
+		ControlMessageTypeFetchOk,
+		ControlMessageTypePublishOk,
+		ControlMessageTypePublishDone,
+		ControlMessageTypePublishBlocked,
+		ControlMessageTypeNamespace,
+		ControlMessageTypeNamespaceDone,
+	}
+	for _, mt := range doesNot {
+		assert.False(t, mt.OpensRequestStream(), "%v should not open a request stream", mt)
+	}
+}
