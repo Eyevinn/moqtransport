@@ -3,7 +3,6 @@ package wire2
 import (
 	"fmt"
 	"io"
-	"math"
 
 	"github.com/Eyevinn/locmaf/vi64"
 )
@@ -71,7 +70,7 @@ func (p *KeyValuePair) parseDelta(data []byte, prevType uint64) (int, error) {
 	if err != nil {
 		return parsed, err
 	}
-	if delta > math.MaxUint64-prevType {
+	if delta > maxUint64-prevType {
 		return parsed, errDeltaTypeOverflow
 	}
 	p.Type = prevType + delta

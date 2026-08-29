@@ -6,9 +6,9 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *FetchHeader) appendV18(buf []byte) []byte {
+func (m *FetchHeader) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(m.RequestID))
-	return buf
+	return buf, nil
 }
 
 func (m *FetchHeader) parseV18(data []byte) error {

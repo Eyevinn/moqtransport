@@ -8,12 +8,12 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *GoAwayCtrl) appendV18(buf []byte) []byte {
+func (m *GoAwayCtrl) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(len(m.NewSessionURI)))
 	buf = append(buf, m.NewSessionURI...)
 	buf = vi64.Append(buf, uint64(m.Timeout))
 	buf = vi64.Append(buf, uint64(m.RequestID))
-	return buf
+	return buf, nil
 }
 
 func (m *GoAwayCtrl) parseV18(data []byte) error {

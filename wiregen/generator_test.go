@@ -13,15 +13,15 @@ var update = flag.Bool("update", false, "rewrite the golden files in testdata")
 // allTags exercises every entry in codecs, so a template change shows up as a
 // golden diff rather than silently re-encoding the whole message set.
 type allTags struct {
-	Ignored        string   `json:"ignored"`
-	RequestID      uint64   `proto:"varint"`
-	TrackName      []byte   `proto:"tlv_bytes"`
-	ErrorReason    string   `proto:"tlv_string" max:"1024"`
-	TrackNamespace [][]byte `proto:"ntlv_bytes" max:"32"`
-	EndOfTrack     bool     `proto:"bool"`
-	EndLocation    Location `proto:"moq_location"`
-	Parameters     KVPList  `proto:"moq_kvp_list"`
-	Properties     KVPList  `proto:"moq_kvp_list_no_length"`
+	Ignored        string     `json:"ignored"`
+	RequestID      uint64     `proto:"varint"`
+	TrackName      []byte     `proto:"tlv_bytes"`
+	ErrorReason    string     `proto:"tlv_string" max:"1024"`
+	TrackNamespace [][]byte   `proto:"ntlv_bytes" max:"32"`
+	EndOfTrack     bool       `proto:"bool"`
+	EndLocation    Location   `proto:"moq_location"`
+	Parameters     Parameters `proto:"moq_params"`
+	Properties     KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 // noFields has nothing on the wire; its codecs must still compile.
@@ -32,8 +32,9 @@ type noFields struct {
 // Location and KVPList stand in for the hand-written types in the target
 // package. Only their names reach the generated source.
 type (
-	Location struct{}
-	KVPList  []struct{}
+	Location   struct{}
+	KVPList    []struct{}
+	Parameters []struct{}
 )
 
 func TestGenerateGolden(t *testing.T) {

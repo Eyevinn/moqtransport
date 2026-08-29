@@ -14,7 +14,7 @@ import (
 // the parser in the scope it belongs to.
 func TestFramingRoundTrip(t *testing.T) {
 	namespace := [][]byte{[]byte("example.com"), []byte("live")}
-	params := KVPList{{Type: 2, ValueVarInt: 3000}}
+	params := Parameters{VarintParameter(ParamObjectDeliveryTimeout, 3000)}
 
 	cases := []struct {
 		name  string
@@ -25,13 +25,13 @@ func TestFramingRoundTrip(t *testing.T) {
 		{"GOAWAY on the control stream", ScopeControl, &GoAwayCtrl{NewSessionURI: "moqt://b.example/", Timeout: 100, RequestID: 6}},
 		{"GOAWAY on a request stream", ScopeRequest, &GoAwayReq{Timeout: 100}},
 		{"SUBSCRIBE", ScopeRequest, &Subscribe{RequestID: 0, TrackNamespace: namespace, TrackName: []byte("v0"), Parameters: params}},
-		{"SUBSCRIBE_OK", ScopeRequest, &SubscribeOk{TrackAlias: 1, Parameters: KVPList{}, TrackProperties: KVPList{}}},
+		{"SUBSCRIBE_OK", ScopeRequest, &SubscribeOk{TrackAlias: 1, Parameters: Parameters{}, TrackProperties: KVPList{}}},
 		{"REQUEST_ERROR", ScopeRequest, &RequestError{ErrorCode: 4, RetryInterval: 0, ErrorReason: "no such track"}},
 		{"FETCH", ScopeRequest, &Fetch{
 			RequestID:  2,
 			FetchType:  FetchTypeRelativeJoining,
 			Joining:    &JoiningFetch{JoiningRequestID: 0, JoiningStart: 1},
-			Parameters: KVPList{},
+			Parameters: Parameters{},
 		}},
 	}
 
@@ -71,7 +71,7 @@ func TestAppendRejectsOversizedBody(t *testing.T) {
 	msg := &Subscribe{
 		TrackNamespace: [][]byte{},
 		TrackName:      []byte{},
-		Parameters:     KVPList{{Type: 1, ValueBytes: make([]byte, maxControlMessageBodyLen)}},
+		Parameters:     Parameters{BytesParameter(ParamAuthorizationToken, make([]byte, maxValueLength))},
 	}
 	_, err := AppendControlMessage(nil, msg)
 	assert.ErrorIs(t, err, errControlMessageTooLong)
@@ -87,7 +87,7 @@ func TestAppendPreservesExistingBuffer(t *testing.T) {
 // TestParseRejectsLengthShorterThanBody covers a declared length that cuts the
 // body short: the message wants bytes the frame did not include.
 func TestParseRejectsLengthShorterThanBody(t *testing.T) {
-	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: KVPList{}}
+	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: Parameters{}}
 	buf, err := AppendControlMessage(nil, msg)
 	require.NoError(t, err)
 
@@ -113,7 +113,7 @@ func TestParseRejectsLengthLongerThanBody(t *testing.T) {
 }
 
 func TestParseTruncatedFrame(t *testing.T) {
-	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: KVPList{}}
+	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: Parameters{}}
 	full, err := AppendControlMessage(nil, msg)
 	require.NoError(t, err)
 
@@ -133,7 +133,7 @@ func TestParseCleanEndOfStream(t *testing.T) {
 
 func TestParseSequentialMessages(t *testing.T) {
 	first := &GoAwayReq{Timeout: 1}
-	second := &RequestOk{Parameters: KVPList{}, TrackProperties: KVPList{}}
+	second := &RequestOk{Parameters: Parameters{}, TrackProperties: KVPList{}}
 
 	buf, err := AppendControlMessage(nil, first)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestScopeSelectsTheMessage(t *testing.T) {
 	})
 
 	t.Run("SUBSCRIBE is not a control stream message", func(t *testing.T) {
-		buf, err := AppendControlMessage(nil, &Subscribe{TrackNamespace: [][]byte{}, TrackName: []byte{}, Parameters: KVPList{}})
+		buf, err := AppendControlMessage(nil, &Subscribe{TrackNamespace: [][]byte{}, TrackName: []byte{}, Parameters: Parameters{}})
 		require.NoError(t, err)
 		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeControl).Parse()
 		assert.ErrorContains(t, err, "unknown control message type")

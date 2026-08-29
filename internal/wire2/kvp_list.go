@@ -13,24 +13,20 @@ import (
 // Type order; the append methods sort a copy rather than requiring the caller
 // to keep the list sorted.
 //
-// Three blocks in the wire format hold a KVPList, and they differ only in how
-// the sequence is bounded:
+// Two blocks in the wire format hold a KVPList, differing only in how the
+// sequence is bounded:
 //
 //   - count-prefixed, used by Message Parameters — appendNum / parseNum
 //   - byte-length-prefixed, used by object Properties — appendLength / parseLength
 //   - unbounded to the end of the enclosing body, used by Setup Options and by
 //     trailing Track Properties — appendDelta / parseAll
 //
-// The registries they draw on differ further in what an unknown Type means:
-// a Setup Option MUST be ignored, a Message Parameter is a PROTOCOL_VIOLATION.
-// That distinction belongs to the caller that knows the registry, not here.
+// The registries they draw on differ in what an unknown Type means: a Setup
+// Option MUST be ignored, an unknown Property is forwarded unchanged. Either
+// way the value is self-describing, because the parity of the Type says how it
+// is encoded. Message Parameters are not Key-Value-Pairs at all and live in
+// parameters.go.
 type KVPList []KeyValuePair
-
-// appendNum writes the list prefixed by its element count.
-func (pp KVPList) appendNum(buf []byte) []byte {
-	buf = vi64.Append(buf, uint64(len(pp)))
-	return pp.appendDelta(buf)
-}
 
 // appendLength writes the list prefixed by its length in bytes.
 func (pp KVPList) appendLength(buf []byte) []byte {
@@ -66,33 +62,6 @@ func (pp KVPList) appendLen() int {
 		prevType = p.Type
 	}
 	return total
-}
-
-// parseNum reads a count-prefixed list and returns the bytes consumed.
-func (pp *KVPList) parseNum(data []byte) (int, error) {
-	count, parsed, err := vi64.Parse(data)
-	if err != nil {
-		return parsed, err
-	}
-	// Every pair costs at least one byte, so the remaining length bounds the
-	// count and with it the allocation.
-	if count > uint64(len(data)-parsed) {
-		return parsed, io.ErrUnexpectedEOF
-	}
-	list := make(KVPList, 0, count)
-	prevType := uint64(0)
-	for range count {
-		var p KeyValuePair
-		n, err := p.parseDelta(data[parsed:], prevType)
-		parsed += n
-		if err != nil {
-			return parsed, err
-		}
-		prevType = p.Type
-		list = append(list, p)
-	}
-	*pp = list
-	return parsed, nil
 }
 
 // parseLength reads a byte-length-prefixed list and returns the bytes

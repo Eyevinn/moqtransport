@@ -8,15 +8,20 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *SubscribeNamespace) appendV18(buf []byte) []byte {
+func (m *SubscribeNamespace) appendV18(buf []byte) ([]byte, error) {
+	var err error
+
 	buf = vi64.Append(buf, uint64(m.RequestID))
 	buf = vi64.Append(buf, uint64(len(m.TrackNamespacePrefix)))
 	for _, v := range m.TrackNamespacePrefix {
 		buf = vi64.Append(buf, uint64(len(v)))
 		buf = append(buf, v...)
 	}
-	buf = m.Parameters.appendNum(buf)
-	return buf
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (m *SubscribeNamespace) parseV18(data []byte) error {

@@ -8,7 +8,9 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *TrackStatus) appendV18(buf []byte) []byte {
+func (m *TrackStatus) appendV18(buf []byte) ([]byte, error) {
+	var err error
+
 	buf = vi64.Append(buf, uint64(m.RequestID))
 	buf = vi64.Append(buf, uint64(len(m.TrackNamespace)))
 	for _, v := range m.TrackNamespace {
@@ -17,8 +19,11 @@ func (m *TrackStatus) appendV18(buf []byte) []byte {
 	}
 	buf = vi64.Append(buf, uint64(len(m.TrackName)))
 	buf = append(buf, m.TrackName...)
-	buf = m.Parameters.appendNum(buf)
-	return buf
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (m *TrackStatus) parseV18(data []byte) error {

@@ -4,9 +4,15 @@
 // The generator design, its codec tag vocabulary and the template approach
 // are derived from wiregen in github.com/mengelbart/moqtransport, which is
 // distributed under the MIT license, Copyright (c) 2023 Mathis Engelbart.
-// The templates here emit MOQT vi64 varints, delegate Key-Value-Pair lists
-// to the hand-written codecs in internal/wire2, and the generator resolves
-// its own imports instead of shelling out to goimports.
+// The templates here emit MOQT vi64 varints, delegate Key-Value-Pair and
+// Message Parameter lists to the hand-written codecs in internal/wire2, and
+// the generator resolves its own imports instead of shelling out to goimports.
+//
+// Bootstrapping: the generator reads the declarations by reflection, so it
+// imports the very package it writes into, and `go generate` fails while that
+// package does not compile. That only bites when a codec signature changes.
+// The way through is to move the generated files and anything that calls their
+// methods out of the package, generate, then move them back.
 package main
 
 import (
@@ -37,6 +43,12 @@ type codec struct {
 	appendTmpl *template.Template
 	parseTmpl  *template.Template
 	imports    []string
+
+	// fallibleAppend marks a codec whose append can fail, which makes the
+	// generated appendV18 propagate an error. Message Parameters are the case:
+	// their value encoding comes from the parameter registry, so a type the
+	// registry does not know cannot be serialized at all.
+	fallibleAppend bool
 }
 
 const vi64Import = "github.com/Eyevinn/locmaf/vi64"
@@ -147,16 +159,23 @@ var codecs = map[string]codec{
 		imports: []string{vi64Import, "io"},
 	},
 
-	// A count-prefixed Key-Value-Pair block, as used by Parameters.
-	"moq_kvp_list": {
-		appendTmpl: tmpl("moq_kvp_list_append", `	buf = m.{{ .Field }}.appendNum(buf)
+	// A count-prefixed Message Parameter block. Message Parameters are NOT
+	// Key-Value-Pairs: the value encoding comes from each parameter's
+	// definition rather than from the parity of its Type, which is why the
+	// block is bounded by a count and an unknown type is fatal.
+	"moq_params": {
+		appendTmpl: tmpl("moq_params_append", `	buf, err = m.{{ .Field }}.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
 `),
-		parseTmpl: tmpl("moq_kvp_list_parse", `	n, err = m.{{ .Field }}.parseNum(data)
+		parseTmpl: tmpl("moq_params_parse", `	n, err = m.{{ .Field }}.parseNum(data)
 	if err != nil {
 		return err
 	}
 	data = data[n:]
 `),
+		fallibleAppend: true,
 	},
 
 	// A Key-Value-Pair block with neither count nor length prefix, running to
@@ -253,8 +272,26 @@ func generate(typ reflect.Type, pkg, methodSuffix, args string) ([]byte, error) 
 }
 
 func (g *generator) generateAppend(typ reflect.Type) error {
-	g.printf("func (m *%s) append%s(buf []byte) []byte {\n", typ.Name(), g.methodSuffix)
-	for _, f := range protoFields(typ) {
+	fields := protoFields(typ)
+
+	// Every appendV18 returns an error so that all messages satisfy one
+	// interface, but only messages with a fallible field need the variable.
+	fallible := false
+	for _, f := range fields {
+		c, err := g.codecFor(f)
+		if err != nil {
+			return err
+		}
+		if c.fallibleAppend {
+			fallible = true
+		}
+	}
+
+	g.printf("func (m *%s) append%s(buf []byte) ([]byte, error) {\n", typ.Name(), g.methodSuffix)
+	if fallible {
+		g.printf("\tvar err error\n\n")
+	}
+	for _, f := range fields {
 		c, err := g.codecFor(f)
 		if err != nil {
 			return err
@@ -263,7 +300,7 @@ func (g *generator) generateAppend(typ reflect.Type) error {
 			return err
 		}
 	}
-	g.printf("\treturn buf\n}\n\n")
+	g.printf("\treturn buf, nil\n}\n\n")
 	return nil
 }
 

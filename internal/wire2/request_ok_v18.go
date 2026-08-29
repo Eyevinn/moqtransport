@@ -2,10 +2,15 @@
 
 package wire2
 
-func (m *RequestOk) appendV18(buf []byte) []byte {
-	buf = m.Parameters.appendNum(buf)
+func (m *RequestOk) appendV18(buf []byte) ([]byte, error) {
+	var err error
+
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
 	buf = m.TrackProperties.appendDelta(buf)
-	return buf
+	return buf, nil
 }
 
 func (m *RequestOk) parseV18(data []byte) error {

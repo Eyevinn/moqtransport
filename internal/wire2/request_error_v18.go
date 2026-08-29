@@ -8,7 +8,7 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *RequestError) appendV18(buf []byte) []byte {
+func (m *RequestError) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(m.ErrorCode))
 	buf = vi64.Append(buf, uint64(m.RetryInterval))
 	buf = vi64.Append(buf, uint64(len(m.ErrorReason)))
@@ -16,7 +16,7 @@ func (m *RequestError) appendV18(buf []byte) []byte {
 	if m.Redirect != nil {
 		buf = m.Redirect.append(buf)
 	}
-	return buf
+	return buf, nil
 }
 
 func (m *RequestError) parseV18(data []byte) error {

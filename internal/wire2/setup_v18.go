@@ -2,9 +2,9 @@
 
 package wire2
 
-func (m *Setup) appendV18(buf []byte) []byte {
+func (m *Setup) appendV18(buf []byte) ([]byte, error) {
 	buf = m.Options.appendDelta(buf)
-	return buf
+	return buf, nil
 }
 
 func (m *Setup) parseV18(data []byte) error {

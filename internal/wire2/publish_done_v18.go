@@ -8,12 +8,12 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *PublishDone) appendV18(buf []byte) []byte {
+func (m *PublishDone) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(m.StatusCode))
 	buf = vi64.Append(buf, uint64(m.StreamCount))
 	buf = vi64.Append(buf, uint64(len(m.ErrorReason)))
 	buf = append(buf, m.ErrorReason...)
-	return buf
+	return buf, nil
 }
 
 func (m *PublishDone) parseV18(data []byte) error {

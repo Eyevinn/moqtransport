@@ -6,16 +6,21 @@ import (
 	"io"
 )
 
-func (m *FetchOk) appendV18(buf []byte) []byte {
+func (m *FetchOk) appendV18(buf []byte) ([]byte, error) {
+	var err error
+
 	if m.EndOfTrack {
 		buf = append(buf, 1)
 	} else {
 		buf = append(buf, 0)
 	}
 	buf = m.EndLocation.append(buf)
-	buf = m.Parameters.appendNum(buf)
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
 	buf = m.TrackProperties.appendDelta(buf)
-	return buf
+	return buf, nil
 }
 
 func (m *FetchOk) parseV18(data []byte) error {

@@ -3,7 +3,12 @@ package wire2
 import (
 	"errors"
 	"fmt"
+	"math"
 )
+
+// maxUint64 is the largest Key-Value-Pair or Message Parameter Type; a delta
+// that would carry the running Type past it is a PROTOCOL_VIOLATION.
+const maxUint64 = uint64(math.MaxUint64)
 
 // Parse errors. Each one is a MUST-close condition in draft-18; the session
 // layer maps them to a session error code when it closes.
@@ -49,6 +54,43 @@ type unknownControlMessageTypeError struct {
 
 func (e unknownControlMessageTypeError) Error() string {
 	return fmt.Sprintf("unknown control message type %#x on a %v stream", uint64(e.messageType), e.scope)
+}
+
+// unknownParameterError is returned for a Message Parameter type the registry
+// does not know. draft-18 Section 10.2 makes it a PROTOCOL_VIOLATION, and the
+// parser has no choice either way: without the registry entry it cannot tell
+// how long the value is, so it cannot reach the next parameter.
+type unknownParameterError struct {
+	parameterType uint64
+}
+
+func (e unknownParameterError) Error() string {
+	return fmt.Sprintf("unknown message parameter type %#x", e.parameterType)
+}
+
+// duplicateParameterError is returned for a repeated Message Parameter type
+// whose definition does not allow repeats.
+type duplicateParameterError struct {
+	parameterType uint64
+}
+
+func (e duplicateParameterError) Error() string {
+	return fmt.Sprintf("duplicate message parameter %s", ParameterName(e.parameterType))
+}
+
+// propertyScopeError is returned for a Property used outside the scope its
+// definition allows.
+type propertyScopeError struct {
+	propertyType uint64
+	scope        PropertyScope
+}
+
+func (e propertyScopeError) Error() string {
+	where := "track"
+	if e.scope == PropertyScopeObject {
+		where = "object"
+	}
+	return fmt.Sprintf("property %s is not allowed in %s scope", PropertyName(e.propertyType), where)
 }
 
 // unknownStreamTypeError is returned for a unidirectional stream whose leading

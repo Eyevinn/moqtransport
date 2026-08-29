@@ -6,10 +6,15 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *RequestUpdate) appendV18(buf []byte) []byte {
+func (m *RequestUpdate) appendV18(buf []byte) ([]byte, error) {
+	var err error
+
 	buf = vi64.Append(buf, uint64(m.RequestID))
-	buf = m.Parameters.appendNum(buf)
-	return buf
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (m *RequestUpdate) parseV18(data []byte) error {
