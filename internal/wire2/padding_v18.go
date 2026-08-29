@@ -2,8 +2,8 @@
 
 package wire2
 
-func (m *Padding) appendV18(buf []byte) []byte {
-	return buf
+func (m *Padding) appendV18(buf []byte) ([]byte, error) {
+	return buf, nil
 }
 
 func (m *Padding) parseV18(data []byte) error {

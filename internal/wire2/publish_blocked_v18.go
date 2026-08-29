@@ -8,7 +8,7 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *PublishBlocked) appendV18(buf []byte) []byte {
+func (m *PublishBlocked) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(len(m.TrackNamespaceSuffix)))
 	for _, v := range m.TrackNamespaceSuffix {
 		buf = vi64.Append(buf, uint64(len(v)))
@@ -16,7 +16,7 @@ func (m *PublishBlocked) appendV18(buf []byte) []byte {
 	}
 	buf = vi64.Append(buf, uint64(len(m.TrackName)))
 	buf = append(buf, m.TrackName...)
-	return buf
+	return buf, nil
 }
 
 func (m *PublishBlocked) parseV18(data []byte) error {

@@ -8,7 +8,9 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *allTags) appendV20(buf []byte) []byte {
+func (m *allTags) appendV20(buf []byte) ([]byte, error) {
+	var err error
+
 	buf = vi64.Append(buf, uint64(m.RequestID))
 	buf = vi64.Append(buf, uint64(len(m.TrackName)))
 	buf = append(buf, m.TrackName...)
@@ -25,9 +27,12 @@ func (m *allTags) appendV20(buf []byte) []byte {
 		buf = append(buf, 0)
 	}
 	buf = m.EndLocation.append(buf)
-	buf = m.Parameters.appendNum(buf)
+	buf, err = m.Parameters.appendNum(buf)
+	if err != nil {
+		return nil, err
+	}
 	buf = m.Properties.appendDelta(buf)
-	return buf
+	return buf, nil
 }
 
 func (m *allTags) parseV20(data []byte) error {

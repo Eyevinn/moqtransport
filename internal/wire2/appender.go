@@ -26,7 +26,10 @@ func AppendControlMessage(buf []byte, m MessageV18) ([]byte, error) {
 	lengthOffset := len(buf)
 	buf = append(buf, 0, 0)
 
-	buf = m.appendV18(buf)
+	buf, err := m.appendV18(buf)
+	if err != nil {
+		return nil, err
+	}
 
 	bodyLen := len(buf) - lengthOffset - 2
 	if bodyLen > maxControlMessageBodyLen {

@@ -18,9 +18,13 @@ func newMessage(m MessageV18) MessageV18 {
 // that the two generated halves agree on field order and framing.
 func TestRoundTripV18(t *testing.T) {
 	namespace := [][]byte{[]byte("example.com"), []byte("meeting=123")}
-	params := KVPList{
-		{Type: 2, ValueVarInt: 5000},
-		{Type: 3, ValueBytes: []byte("token")},
+	params := Parameters{
+		// In ascending Type order, which is how the codec writes them, so a
+		// round trip compares equal.
+		VarintParameter(ParamObjectDeliveryTimeout, 5000),
+		BytesParameter(ParamAuthorizationToken, []byte("token")),
+		LocationParameter(ParamLargestObject, Location{Group: 9, Object: 3}),
+		Uint8Parameter(ParamSubscriberPriority, 128),
 	}
 	properties := KVPList{{Type: 4, ValueVarInt: 1}}
 
@@ -34,20 +38,20 @@ func TestRoundTripV18(t *testing.T) {
 		{"GoAwayReq", &GoAwayReq{NewSessionURI: "", Timeout: 0}},
 		{"Subscribe", &Subscribe{RequestID: 4, TrackNamespace: namespace, TrackName: []byte("video0"), Parameters: params}},
 		{"SubscribeOk", &SubscribeOk{TrackAlias: 7, Parameters: params, TrackProperties: properties}},
-		{"TrackStatus", &TrackStatus{RequestID: 6, TrackNamespace: namespace, TrackName: []byte("audio0"), Parameters: KVPList{}}},
+		{"TrackStatus", &TrackStatus{RequestID: 6, TrackNamespace: namespace, TrackName: []byte("audio0"), Parameters: Parameters{}}},
 		{"RequestUpdate", &RequestUpdate{RequestID: 8, Parameters: params}},
 		{"Publish", &Publish{RequestID: 2, TrackNamespace: namespace, TrackName: []byte("video0"), TrackAlias: 3, Parameters: params, TrackProperties: properties}},
 		{"PublishDone", &PublishDone{StatusCode: 0x4, StreamCount: 17, ErrorReason: "track ended"}},
 		{"FetchOk", &FetchOk{EndOfTrack: true, EndLocation: Location{Group: 9, Object: 4}, Parameters: params, TrackProperties: properties}},
-		{"PublishNamespace", &PublishNamespace{RequestID: 10, TrackNamespace: namespace, Parameters: KVPList{}}},
+		{"PublishNamespace", &PublishNamespace{RequestID: 10, TrackNamespace: namespace, Parameters: Parameters{}}},
 		{"Namespace", &Namespace{TrackNamespaceSuffix: [][]byte{[]byte("participant=100")}}},
 		{"NamespaceDone", &NamespaceDone{TrackNamespaceSuffix: [][]byte{[]byte("participant=100")}}},
-		{"SubscribeNamespace", &SubscribeNamespace{RequestID: 12, TrackNamespacePrefix: namespace, Parameters: KVPList{}}},
+		{"SubscribeNamespace", &SubscribeNamespace{RequestID: 12, TrackNamespacePrefix: namespace, Parameters: Parameters{}}},
 		{"SubscribeTracks", &SubscribeTracks{RequestID: 14, TrackNamespacePrefix: namespace, Parameters: params}},
 		{"PublishBlocked", &PublishBlocked{TrackNamespaceSuffix: [][]byte{[]byte("p=1")}, TrackName: []byte("video0")}},
 		{"RequestOk", &RequestOk{Parameters: params, TrackProperties: properties}},
-		{"RequestOk empty", &RequestOk{Parameters: KVPList{}, TrackProperties: KVPList{}}},
-		{"PublishOk", &PublishOk{Parameters: KVPList{}, TrackProperties: KVPList{}}},
+		{"RequestOk empty", &RequestOk{Parameters: Parameters{}, TrackProperties: KVPList{}}},
+		{"PublishOk", &PublishOk{Parameters: Parameters{}, TrackProperties: KVPList{}}},
 		{"RequestError", &RequestError{ErrorCode: 0x3, RetryInterval: 1, ErrorReason: "timeout"}},
 		{"RequestError with redirect", &RequestError{
 			ErrorCode:     0x10,
@@ -74,13 +78,13 @@ func TestRoundTripV18(t *testing.T) {
 			RequestID:  18,
 			FetchType:  FetchTypeRelativeJoining,
 			Joining:    &JoiningFetch{JoiningRequestID: 4, JoiningStart: 2},
-			Parameters: KVPList{},
+			Parameters: Parameters{},
 		}},
 		{"Fetch absolute joining", &Fetch{
 			RequestID:  20,
 			FetchType:  FetchTypeAbsoluteJoining,
 			Joining:    &JoiningFetch{JoiningRequestID: 4, JoiningStart: 77},
-			Parameters: KVPList{},
+			Parameters: Parameters{},
 		}},
 		{"FetchHeader", &FetchHeader{RequestID: 16}},
 		{"Padding", &Padding{}},
@@ -88,7 +92,8 @@ func TestRoundTripV18(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			buf := tc.msg.appendV18(nil)
+			buf, err := tc.msg.appendV18(nil)
+			require.NoError(t, err)
 			got := newMessage(tc.msg)
 			require.NoError(t, got.parseV18(buf))
 			assert.Equal(t, tc.msg, got)
@@ -100,14 +105,16 @@ func TestRoundTripV18(t *testing.T) {
 // TestParseRejectsTrailingBytes covers the read-side length check: the body a
 // message parses must be exactly the body the Length field declared.
 func TestParseRejectsTrailingBytes(t *testing.T) {
-	msg := &Subscribe{RequestID: 4, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("t"), Parameters: KVPList{}}
-	buf := append(msg.appendV18(nil), 0x00)
-	assert.ErrorIs(t, (&Subscribe{}).parseV18(buf), errTrailingBytes)
+	msg := &Subscribe{RequestID: 4, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("t"), Parameters: Parameters{}}
+	body, err := msg.appendV18(nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, (&Subscribe{}).parseV18(append(body, 0x00)), errTrailingBytes)
 }
 
 func TestParseRejectsTruncatedBody(t *testing.T) {
-	msg := &Subscribe{RequestID: 4, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("track"), Parameters: KVPList{}}
-	buf := msg.appendV18(nil)
+	msg := &Subscribe{RequestID: 4, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("track"), Parameters: Parameters{}}
+	buf, err := msg.appendV18(nil)
+	require.NoError(t, err)
 	for i := range buf[:len(buf)-1] {
 		assert.Error(t, (&Subscribe{}).parseV18(buf[:i]), "truncating to %d bytes should fail", i)
 	}
@@ -116,7 +123,9 @@ func TestParseRejectsTruncatedBody(t *testing.T) {
 func TestParseRejectsOversizedReasonPhrase(t *testing.T) {
 	long := make([]byte, 1025)
 	msg := &PublishDone{StatusCode: 1, StreamCount: 1, ErrorReason: string(long)}
-	assert.ErrorIs(t, (&PublishDone{}).parseV18(msg.appendV18(nil)), errFieldTooLong)
+	buf, err := msg.appendV18(nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, (&PublishDone{}).parseV18(buf), errFieldTooLong)
 }
 
 func TestParseRejectsOversizedNamespace(t *testing.T) {
@@ -124,13 +133,17 @@ func TestParseRejectsOversizedNamespace(t *testing.T) {
 	for i := range ns {
 		ns[i] = []byte("x")
 	}
-	msg := &Subscribe{RequestID: 0, TrackNamespace: ns, TrackName: []byte("t"), Parameters: KVPList{}}
-	assert.ErrorIs(t, (&Subscribe{}).parseV18(msg.appendV18(nil)), errTooManyFields)
+	msg := &Subscribe{RequestID: 0, TrackNamespace: ns, TrackName: []byte("t"), Parameters: Parameters{}}
+	buf, err := msg.appendV18(nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, (&Subscribe{}).parseV18(buf), errTooManyFields)
 }
 
 func TestFetchRejectsUnknownType(t *testing.T) {
-	msg := &Fetch{RequestID: 2, FetchType: FetchType(0x9), Parameters: KVPList{}}
-	assert.ErrorIs(t, (&Fetch{}).parseV18(msg.appendV18(nil)), errInvalidFetchType)
+	msg := &Fetch{RequestID: 2, FetchType: FetchType(0x9), Parameters: Parameters{}}
+	buf, err := msg.appendV18(nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, (&Fetch{}).parseV18(buf), errInvalidFetchType)
 }
 
 // TestSubscribeWireFormat pins the exact draft-18 byte layout of a SUBSCRIBE
@@ -140,16 +153,18 @@ func TestSubscribeWireFormat(t *testing.T) {
 		RequestID:      4,
 		TrackNamespace: [][]byte{[]byte("ns")},
 		TrackName:      []byte("v0"),
-		Parameters:     KVPList{{Type: 2, ValueVarInt: 100}},
+		Parameters:     Parameters{Uint8Parameter(ParamSubscriberPriority, 100)},
 	}
+	buf, err := msg.appendV18(nil)
+	require.NoError(t, err)
 	assert.Equal(t, []byte{
 		0x04, // Request ID
 		0x01, // Number of Track Namespace Fields
 		0x02, 'n', 's',
 		0x02, 'v', '0', // Track Name
 		0x01,       // Number of Parameters
-		0x02, 0x64, // Delta Type 2, varint value 100
-	}, msg.appendV18(nil))
+		0x20, 0x64, // Delta Type 0x20 (SUBSCRIBER_PRIORITY), uint8 value 100
+	}, buf)
 }
 
 func TestControlMessageTypeString(t *testing.T) {

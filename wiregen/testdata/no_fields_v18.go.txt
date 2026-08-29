@@ -2,8 +2,8 @@
 
 package wire2
 
-func (m *noFields) appendV18(buf []byte) []byte {
-	return buf
+func (m *noFields) appendV18(buf []byte) ([]byte, error) {
+	return buf, nil
 }
 
 func (m *noFields) parseV18(data []byte) error {

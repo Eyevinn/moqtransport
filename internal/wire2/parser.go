@@ -8,34 +8,6 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-// StreamScope is the codepoint namespace a control message is dispatched in.
-//
-// draft-18 reuses codepoints across stream kinds, so there is no single flat
-// message table: 0x10 is GOAWAY on both, but carries a Request ID only on the
-// control stream, and 0x5 is REQUEST_ERROR on a request stream while naming
-// FETCH_HEADER as a unidirectional stream type. A parser that does not know
-// which stream it is reading cannot decode correctly.
-//
-// Unidirectional data streams are not framed this way at all -- their headers
-// have no Length field -- so they are classified by ClassifyStreamType rather
-// than parsed here.
-type StreamScope uint8
-
-const (
-	// ScopeControl is the unidirectional control stream pair, which carries
-	// SETUP and GOAWAY.
-	ScopeControl StreamScope = iota
-	// ScopeRequest is a per-request bidirectional stream.
-	ScopeRequest
-)
-
-func (s StreamScope) String() string {
-	if s == ScopeControl {
-		return "control"
-	}
-	return "request"
-}
-
 // ControlMessageParser reads length-framed control messages from one stream.
 type ControlMessageParser struct {
 	reader *bufio.Reader

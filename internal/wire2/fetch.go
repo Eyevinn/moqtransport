@@ -58,12 +58,12 @@ type Fetch struct {
 	FetchType  FetchType
 	Standalone *StandaloneFetch
 	Joining    *JoiningFetch
-	Parameters KVPList
+	Parameters Parameters
 }
 
 func (m *Fetch) Type() ControlMessageType { return ControlMessageTypeFetch }
 
-func (m *Fetch) appendV18(buf []byte) []byte {
+func (m *Fetch) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, m.RequestID)
 	buf = vi64.Append(buf, uint64(m.FetchType))
 	if m.FetchType == FetchTypeStandalone && m.Standalone != nil {

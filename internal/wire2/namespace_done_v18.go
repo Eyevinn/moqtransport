@@ -8,13 +8,13 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-func (m *NamespaceDone) appendV18(buf []byte) []byte {
+func (m *NamespaceDone) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(len(m.TrackNamespaceSuffix)))
 	for _, v := range m.TrackNamespaceSuffix {
 		buf = vi64.Append(buf, uint64(len(v)))
 		buf = append(buf, v...)
 	}
-	return buf
+	return buf, nil
 }
 
 func (m *NamespaceDone) parseV18(data []byte) error {

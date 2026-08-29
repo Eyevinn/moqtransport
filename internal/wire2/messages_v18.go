@@ -58,10 +58,10 @@ func (m *GoAwayReq) Type() ControlMessageType { return ControlMessageTypeGoAway 
 // Subscribe is the SUBSCRIBE message (Section 10.7), the first message on a
 // subscribe request stream.
 type Subscribe struct {
-	RequestID      uint64   `proto:"varint"`
-	TrackNamespace [][]byte `proto:"ntlv_bytes" max:"32"`
-	TrackName      []byte   `proto:"tlv_bytes"`
-	Parameters     KVPList  `proto:"moq_kvp_list"`
+	RequestID      uint64     `proto:"varint"`
+	TrackNamespace [][]byte   `proto:"ntlv_bytes" max:"32"`
+	TrackName      []byte     `proto:"tlv_bytes"`
+	Parameters     Parameters `proto:"moq_params"`
 }
 
 func (m *Subscribe) Type() ControlMessageType { return ControlMessageTypeSubscribe }
@@ -70,9 +70,9 @@ func (m *Subscribe) Type() ControlMessageType { return ControlMessageTypeSubscri
 // have no count or length prefix and run to the end of the body, which is what
 // makes the 16-bit message length load-bearing.
 type SubscribeOk struct {
-	TrackAlias      uint64  `proto:"varint"`
-	Parameters      KVPList `proto:"moq_kvp_list"`
-	TrackProperties KVPList `proto:"moq_kvp_list_no_length"`
+	TrackAlias      uint64     `proto:"varint"`
+	Parameters      Parameters `proto:"moq_params"`
+	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *SubscribeOk) Type() ControlMessageType { return ControlMessageTypeSubscribeOk }
@@ -80,10 +80,10 @@ func (m *SubscribeOk) Type() ControlMessageType { return ControlMessageTypeSubsc
 // TrackStatus is the TRACK_STATUS message (Section 10.14). Its body is
 // identical to SUBSCRIBE; only the codepoint and the response differ.
 type TrackStatus struct {
-	RequestID      uint64   `proto:"varint"`
-	TrackNamespace [][]byte `proto:"ntlv_bytes" max:"32"`
-	TrackName      []byte   `proto:"tlv_bytes"`
-	Parameters     KVPList  `proto:"moq_kvp_list"`
+	RequestID      uint64     `proto:"varint"`
+	TrackNamespace [][]byte   `proto:"ntlv_bytes" max:"32"`
+	TrackName      []byte     `proto:"tlv_bytes"`
+	Parameters     Parameters `proto:"moq_params"`
 }
 
 func (m *TrackStatus) Type() ControlMessageType { return ControlMessageTypeTrackStatus }
@@ -91,8 +91,8 @@ func (m *TrackStatus) Type() ControlMessageType { return ControlMessageTypeTrack
 // RequestUpdate is the REQUEST_UPDATE message (Section 10.9), sent by the
 // originator of a request on that request's own stream.
 type RequestUpdate struct {
-	RequestID  uint64  `proto:"varint"`
-	Parameters KVPList `proto:"moq_kvp_list"`
+	RequestID  uint64     `proto:"varint"`
+	Parameters Parameters `proto:"moq_params"`
 }
 
 func (m *RequestUpdate) Type() ControlMessageType { return ControlMessageTypeRequestUpdate }
@@ -100,12 +100,12 @@ func (m *RequestUpdate) Type() ControlMessageType { return ControlMessageTypeReq
 // Publish is the PUBLISH message (Section 10.10), the first message on a
 // publish request stream.
 type Publish struct {
-	RequestID       uint64   `proto:"varint"`
-	TrackNamespace  [][]byte `proto:"ntlv_bytes" max:"32"`
-	TrackName       []byte   `proto:"tlv_bytes"`
-	TrackAlias      uint64   `proto:"varint"`
-	Parameters      KVPList  `proto:"moq_kvp_list"`
-	TrackProperties KVPList  `proto:"moq_kvp_list_no_length"`
+	RequestID       uint64     `proto:"varint"`
+	TrackNamespace  [][]byte   `proto:"ntlv_bytes" max:"32"`
+	TrackName       []byte     `proto:"tlv_bytes"`
+	TrackAlias      uint64     `proto:"varint"`
+	Parameters      Parameters `proto:"moq_params"`
+	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *Publish) Type() ControlMessageType { return ControlMessageTypePublish }
@@ -121,19 +121,19 @@ func (m *PublishDone) Type() ControlMessageType { return ControlMessageTypePubli
 
 // FetchOk is the FETCH_OK message (Section 10.13).
 type FetchOk struct {
-	EndOfTrack      bool     `proto:"bool"`
-	EndLocation     Location `proto:"moq_location"`
-	Parameters      KVPList  `proto:"moq_kvp_list"`
-	TrackProperties KVPList  `proto:"moq_kvp_list_no_length"`
+	EndOfTrack      bool       `proto:"bool"`
+	EndLocation     Location   `proto:"moq_location"`
+	Parameters      Parameters `proto:"moq_params"`
+	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *FetchOk) Type() ControlMessageType { return ControlMessageTypeFetchOk }
 
 // PublishNamespace is the PUBLISH_NAMESPACE message (Section 10.15).
 type PublishNamespace struct {
-	RequestID      uint64   `proto:"varint"`
-	TrackNamespace [][]byte `proto:"ntlv_bytes" max:"32"`
-	Parameters     KVPList  `proto:"moq_kvp_list"`
+	RequestID      uint64     `proto:"varint"`
+	TrackNamespace [][]byte   `proto:"ntlv_bytes" max:"32"`
+	Parameters     Parameters `proto:"moq_params"`
 }
 
 func (m *PublishNamespace) Type() ControlMessageType { return ControlMessageTypePublishNamespace }
@@ -157,9 +157,9 @@ func (m *NamespaceDone) Type() ControlMessageType { return ControlMessageTypeNam
 // SubscribeNamespace is the SUBSCRIBE_NAMESPACE message (Section 10.18), which
 // asks for the set of matching namespaces and future updates to it.
 type SubscribeNamespace struct {
-	RequestID            uint64   `proto:"varint"`
-	TrackNamespacePrefix [][]byte `proto:"ntlv_bytes" max:"32"`
-	Parameters           KVPList  `proto:"moq_kvp_list"`
+	RequestID            uint64     `proto:"varint"`
+	TrackNamespacePrefix [][]byte   `proto:"ntlv_bytes" max:"32"`
+	Parameters           Parameters `proto:"moq_params"`
 }
 
 func (m *SubscribeNamespace) Type() ControlMessageType {
@@ -170,9 +170,9 @@ func (m *SubscribeNamespace) Type() ControlMessageType {
 // split it out of SUBSCRIBE_NAMESPACE: the namespace form announces
 // namespaces, this one asks the publisher to publish the matching tracks.
 type SubscribeTracks struct {
-	RequestID            uint64   `proto:"varint"`
-	TrackNamespacePrefix [][]byte `proto:"ntlv_bytes" max:"32"`
-	Parameters           KVPList  `proto:"moq_kvp_list"`
+	RequestID            uint64     `proto:"varint"`
+	TrackNamespacePrefix [][]byte   `proto:"ntlv_bytes" max:"32"`
+	Parameters           Parameters `proto:"moq_params"`
 }
 
 func (m *SubscribeTracks) Type() ControlMessageType { return ControlMessageTypeSubscribeTracks }
@@ -196,8 +196,8 @@ func (m *PublishBlocked) Type() ControlMessageType { return ControlMessageTypePu
 // them in any of the others is a PROTOCOL_VIOLATION, which is a check for the
 // handler that knows which request the stream belongs to.
 type RequestOk struct {
-	Parameters      KVPList `proto:"moq_kvp_list"`
-	TrackProperties KVPList `proto:"moq_kvp_list_no_length"`
+	Parameters      Parameters `proto:"moq_params"`
+	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *RequestOk) Type() ControlMessageType { return ControlMessageTypeRequestOk }
@@ -206,8 +206,8 @@ func (m *RequestOk) Type() ControlMessageType { return ControlMessageTypeRequest
 // ControlMessageTypePublishOk: it exists so a peer that still sends 0x1E can
 // be parsed, and is never sent by this implementation.
 type PublishOk struct {
-	Parameters      KVPList `proto:"moq_kvp_list"`
-	TrackProperties KVPList `proto:"moq_kvp_list_no_length"`
+	Parameters      Parameters `proto:"moq_params"`
+	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *PublishOk) Type() ControlMessageType { return ControlMessageTypePublishOk }
