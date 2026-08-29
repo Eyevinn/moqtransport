@@ -8,11 +8,9 @@
 // Message Parameter lists to the hand-written codecs in internal/wire2, and
 // the generator resolves its own imports instead of shelling out to goimports.
 //
-// Bootstrapping: the generator reads the declarations by reflection, so it
-// imports the very package it writes into, and `go generate` fails while that
-// package does not compile. That only bites when a codec signature changes.
-// The way through is to move the generated files and anything that calls their
-// methods out of the package, generate, then move them back.
+// The generator reads the declaration file as source rather than reflecting
+// over the compiled package, so it never has to link the package it writes
+// into. See parseDeclarations.
 package main
 
 import (
@@ -21,7 +19,6 @@ import (
 	"fmt"
 	"go/format"
 	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"text/template"
@@ -250,9 +247,9 @@ type generator struct {
 	body    bytes.Buffer
 }
 
-// generate emits the append/parse pair for typ. methodSuffix distinguishes the
+// generate emits the append/parse pair for msg. methodSuffix distinguishes the
 // draft a declaration set belongs to, so several sets can live in one package.
-func generate(typ reflect.Type, pkg, methodSuffix, args string) ([]byte, error) {
+func generate(msg messageDecl, pkg, methodSuffix, args string) ([]byte, error) {
 	if pkg == "" {
 		return nil, errInvalidPackage
 	}
@@ -262,17 +259,17 @@ func generate(typ reflect.Type, pkg, methodSuffix, args string) ([]byte, error) 
 		args:         args,
 		imports:      map[string]struct{}{},
 	}
-	if err := g.generateAppend(typ); err != nil {
+	if err := g.generateAppend(msg); err != nil {
 		return nil, err
 	}
-	if err := g.generateParse(typ); err != nil {
+	if err := g.generateParse(msg); err != nil {
 		return nil, err
 	}
 	return g.format()
 }
 
-func (g *generator) generateAppend(typ reflect.Type) error {
-	fields := protoFields(typ)
+func (g *generator) generateAppend(msg messageDecl) error {
+	fields := msg.protoFields()
 
 	// Every appendV18 returns an error so that all messages satisfy one
 	// interface, but only messages with a fallible field need the variable.
@@ -287,7 +284,7 @@ func (g *generator) generateAppend(typ reflect.Type) error {
 		}
 	}
 
-	g.printf("func (m *%s) append%s(buf []byte) ([]byte, error) {\n", typ.Name(), g.methodSuffix)
+	g.printf("func (m *%s) append%s(buf []byte) ([]byte, error) {\n", msg.name, g.methodSuffix)
 	if fallible {
 		g.printf("\tvar err error\n\n")
 	}
@@ -304,10 +301,10 @@ func (g *generator) generateAppend(typ reflect.Type) error {
 	return nil
 }
 
-func (g *generator) generateParse(typ reflect.Type) error {
-	fields := protoFields(typ)
+func (g *generator) generateParse(msg messageDecl) error {
+	fields := msg.protoFields()
 
-	g.printf("func (m *%s) parse%s(data []byte) error {\n", typ.Name(), g.methodSuffix)
+	g.printf("func (m *%s) parse%s(data []byte) error {\n", msg.name, g.methodSuffix)
 	// A message with no wire fields parses nothing, so the scratch variables
 	// would be unused.
 	if len(fields) > 0 {
@@ -332,8 +329,8 @@ func (g *generator) generateParse(typ reflect.Type) error {
 	return nil
 }
 
-func (g *generator) codecFor(f reflect.StructField) (codec, error) {
-	proto := f.Tag.Get("proto")
+func (g *generator) codecFor(f fieldDecl) (codec, error) {
+	proto := f.tag.Get("proto")
 	c, ok := codecs[proto]
 	if !ok {
 		return codec{}, unknownProtoTypeErr(proto)
@@ -352,25 +349,12 @@ func (g *generator) codecFor(f reflect.StructField) (codec, error) {
 // Phrase is 1024, New Session URI 8192), an element count for ntlv_bytes (a
 // Track Namespace holds at most 32 fields). Without the tag no bound is
 // generated beyond what the message body itself implies.
-func templateData(f reflect.StructField) map[string]string {
+func templateData(f fieldDecl) map[string]string {
 	return map[string]string{
-		"Field": f.Name,
-		"Var":   strings.ToLower(f.Name[:1]) + f.Name[1:],
-		"Max":   f.Tag.Get("max"),
+		"Field": f.name,
+		"Var":   strings.ToLower(f.name[:1]) + f.name[1:],
+		"Max":   f.tag.Get("max"),
 	}
-}
-
-// protoFields returns the fields of typ carrying a proto tag, i.e. the fields
-// that appear on the wire, in declaration order.
-func protoFields(typ reflect.Type) []reflect.StructField {
-	var fields []reflect.StructField
-	for i := range typ.NumField() {
-		f := typ.Field(i)
-		if _, ok := f.Tag.Lookup("proto"); ok {
-			fields = append(fields, f)
-		}
-	}
-	return fields
 }
 
 func (g *generator) printf(format string, args ...any) {
