@@ -26,4 +26,8 @@ var (
 
 	// errValueTooLong means a Key-Value-Pair value exceeded 2^16-1 bytes.
 	errValueTooLong = errors.New("key-value-pair value exceeds 65535 bytes")
+
+	// errInvalidFetchType means a FETCH named a Fetch Type outside the three
+	// draft-18 defines.
+	errInvalidFetchType = errors.New("invalid fetch type")
 )
