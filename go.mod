@@ -3,7 +3,7 @@ module github.com/Eyevinn/moqtransport
 go 1.25.0
 
 require (
-	github.com/Eyevinn/locmaf v0.2.0
+	github.com/Eyevinn/locmaf v0.2.1
 	github.com/mengelbart/qlog v0.1.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/quic-go/webtransport-go v0.12.0
