@@ -1,6 +1,9 @@
 package wire2
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Parse errors. Each one is a MUST-close condition in draft-18; the session
 // layer maps them to a session error code when it closes.
@@ -30,4 +33,30 @@ var (
 	// errInvalidFetchType means a FETCH named a Fetch Type outside the three
 	// draft-18 defines.
 	errInvalidFetchType = errors.New("invalid fetch type")
+
+	// errControlMessageTooLong means a message body would not fit the 16-bit
+	// Message Length field, so it cannot be framed at all.
+	errControlMessageTooLong = errors.New("control message body exceeds 65535 bytes")
 )
+
+// unknownControlMessageTypeError is returned for a message type that has no
+// meaning in the scope it arrived in. draft-18 Section 10 requires the session
+// to be closed: control messages are not intended to be ignored.
+type unknownControlMessageTypeError struct {
+	scope       StreamScope
+	messageType ControlMessageType
+}
+
+func (e unknownControlMessageTypeError) Error() string {
+	return fmt.Sprintf("unknown control message type %#x on a %v stream", uint64(e.messageType), e.scope)
+}
+
+// unknownStreamTypeError is returned for a unidirectional stream whose leading
+// varint is not in Table 3. The session MUST be closed.
+type unknownStreamTypeError struct {
+	streamType StreamType
+}
+
+func (e unknownStreamTypeError) Error() string {
+	return fmt.Sprintf("unknown stream type %#x", uint64(e.streamType))
+}

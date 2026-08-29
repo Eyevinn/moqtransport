@@ -246,7 +246,7 @@ func (m *Padding) Type() ControlMessageType {
 // Every declaration must carry a complete draft-18 codec. FetchHeader and
 // Padding are stream headers rather than control messages, but they are framed
 // and parsed the same way, so they satisfy the same interface.
-var _ = []messageV18{
+var _ = []MessageV18{
 	(*Setup)(nil),
 	(*GoAwayCtrl)(nil),
 	(*GoAwayReq)(nil),
