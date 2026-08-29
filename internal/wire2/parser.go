@@ -22,6 +22,13 @@ func NewControlMessageParser(r io.Reader, scope StreamScope) *ControlMessagePars
 	}
 }
 
+// Reader returns the buffered reader the parser reads from, so a caller that
+// has to sniff the stream type first can do so without a second layer of
+// buffering swallowing bytes the parser then needs.
+func (p *ControlMessageParser) Reader() io.ByteReader {
+	return p.reader
+}
+
 // Parse reads the next control message. It returns io.EOF, and only io.EOF,
 // when the stream ends cleanly between messages; a stream that ends part-way
 // through one gives io.ErrUnexpectedEOF.
@@ -34,7 +41,18 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	return p.ParseBody(ControlMessageType(messageType))
+}
 
+// ParseBody reads the length and body of a message whose type varint has
+// already been consumed.
+//
+// The control stream needs this: its leading varint is both the unidirectional
+// stream type and the type of its first message, since Table 3's control
+// stream type 0x2F00 is SETUP's own codepoint. So the caller sniffs the stream
+// type to learn what kind of stream it has, then hands the type back here
+// rather than having to unread it.
+func (p *ControlMessageParser) ParseBody(messageType ControlMessageType) (ControlMessage, error) {
 	var lengthBytes [2]byte
 	if _, err := io.ReadFull(p.reader, lengthBytes[:]); err != nil {
 		return nil, unexpectedEOF(err)
@@ -50,7 +68,7 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 		return nil, unexpectedEOF(err)
 	}
 
-	msg, err := newControlMessage(p.scope, ControlMessageType(messageType))
+	msg, err := newControlMessage(p.scope, messageType)
 	if err != nil {
 		return nil, err
 	}
