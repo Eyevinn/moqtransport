@@ -191,6 +191,25 @@ var codecs = map[string]codec{
 		imports: []string{"io"},
 	},
 
+	// An optional trailing Redirect structure, present in REQUEST_ERROR only
+	// when the Error Code is REDIRECT. Since it is the last field, the message
+	// body length tells the parser whether it is there.
+	"moq_opt_redirect": {
+		appendTmpl: tmpl("moq_opt_redirect_append", `	if m.{{ .Field }} != nil {
+		buf = m.{{ .Field }}.append(buf)
+	}
+`),
+		parseTmpl: tmpl("moq_opt_redirect_parse", `	if len(data) > 0 {
+		m.{{ .Field }} = &Redirect{}
+		n, err = m.{{ .Field }}.parse(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+	}
+`),
+	},
+
 	"moq_location": {
 		appendTmpl: tmpl("moq_location_append", `	buf = m.{{ .Field }}.append(buf)
 `),

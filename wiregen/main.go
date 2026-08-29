@@ -8,13 +8,41 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+
+	"github.com/Eyevinn/moqtransport/internal/wire2"
 )
 
 // msgs lists the message declarations to generate codecs for. Every entry must
 // be a struct in the target package whose wire fields carry `proto` tags.
 //
-// The list is populated together with the declaration file it mirrors.
-var msgs = []any{}
+// It mirrors internal/wire2/messages_v18.go. Messages whose body is
+// conditional on a sibling field are hand-written and deliberately absent:
+// Fetch, whose optional structures are selected by Fetch Type.
+var msgs = []any{
+	wire2.Setup{},
+	wire2.GoAwayCtrl{},
+	wire2.GoAwayReq{},
+
+	wire2.Subscribe{},
+	wire2.SubscribeOk{},
+	wire2.TrackStatus{},
+	wire2.RequestUpdate{},
+	wire2.Publish{},
+	wire2.PublishDone{},
+	wire2.FetchOk{},
+	wire2.PublishNamespace{},
+	wire2.Namespace{},
+	wire2.NamespaceDone{},
+	wire2.SubscribeNamespace{},
+	wire2.SubscribeTracks{},
+	wire2.PublishBlocked{},
+	wire2.RequestOk{},
+	wire2.PublishOk{},
+	wire2.RequestError{},
+
+	wire2.FetchHeader{},
+	wire2.Padding{},
+}
 
 var (
 	matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
