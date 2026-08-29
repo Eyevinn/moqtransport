@@ -49,11 +49,21 @@ const (
 	greaseStep = 0x7F
 )
 
-// IsGreaseSetupOption reports whether typ is one of the reserved greasing
-// codepoints. They carry no meaning and MUST be ignored, like any other
-// unrecognized option; naming them only makes logs easier to read.
+// IsGreaseCode reports whether v is one of the values Section 14 reserves for
+// greasing. Every registry in the draft carries the same reservation, so this
+// answers the question for all of them: parameters, properties, setup options
+// and the error code registries alike.
+//
+// A grease value is deliberate, not a bug. It carries no meaning and is
+// handled exactly like any other unrecognized value; naming it only makes logs
+// easier to read.
+func IsGreaseCode(v uint64) bool {
+	return v >= greaseBase && (v-greaseBase)%greaseStep == 0
+}
+
+// IsGreaseSetupOption reports whether typ is a reserved greasing codepoint.
 func IsGreaseSetupOption(typ uint64) bool {
-	return typ >= greaseBase && (typ-greaseBase)%greaseStep == 0
+	return IsGreaseCode(typ)
 }
 
 // KnownSetupOption reports whether typ is registered in this version of MOQT.
