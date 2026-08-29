@@ -58,6 +58,9 @@ func (m *allTags) parseV18(data []byte) error {
 		return err
 	}
 	data = data[n:]
+	if errorReasonLength > 1024 {
+		return errFieldTooLong
+	}
 	if uint64(len(data)) < errorReasonLength {
 		return io.ErrUnexpectedEOF
 	}
@@ -70,6 +73,9 @@ func (m *allTags) parseV18(data []byte) error {
 		return err
 	}
 	data = data[n:]
+	if trackNamespaceCount > 32 {
+		return errTooManyFields
+	}
 	// The count cannot exceed the remaining bytes: every element costs at
 	// least one byte, so this bounds the allocation without trusting it.
 	if trackNamespaceCount > uint64(len(data)) {

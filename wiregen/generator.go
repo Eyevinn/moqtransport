@@ -74,7 +74,10 @@ var codecs = map[string]codec{
 		return err
 	}
 	data = data[n:]
-	if uint64(len(data)) < {{ .Var }}Length {
+{{ if .Max }}	if {{ .Var }}Length > {{ .Max }} {
+		return errFieldTooLong
+	}
+{{ end }}	if uint64(len(data)) < {{ .Var }}Length {
 		return io.ErrUnexpectedEOF
 	}
 	m.{{ .Field }} = data[:{{ .Var }}Length]
@@ -93,7 +96,10 @@ var codecs = map[string]codec{
 		return err
 	}
 	data = data[n:]
-	if uint64(len(data)) < {{ .Var }}Length {
+{{ if .Max }}	if {{ .Var }}Length > {{ .Max }} {
+		return errFieldTooLong
+	}
+{{ end }}	if uint64(len(data)) < {{ .Var }}Length {
 		return io.ErrUnexpectedEOF
 	}
 	m.{{ .Field }} = string(data[:{{ .Var }}Length])
@@ -115,7 +121,10 @@ var codecs = map[string]codec{
 		return err
 	}
 	data = data[n:]
-	// The count cannot exceed the remaining bytes: every element costs at
+{{ if .Max }}	if {{ .Var }}Count > {{ .Max }} {
+		return errTooManyFields
+	}
+{{ end }}	// The count cannot exceed the remaining bytes: every element costs at
 	// least one byte, so this bounds the allocation without trusting it.
 	if {{ .Var }}Count > uint64(len(data)) {
 		return io.ErrUnexpectedEOF
@@ -279,12 +288,19 @@ func (g *generator) codecFor(f reflect.StructField) (codec, error) {
 	return c, nil
 }
 
-// templateData exposes the field name and a lowerCamel variant safe to use as
-// a local variable name in the generated parser.
+// templateData exposes the field name, a lowerCamel variant safe to use as a
+// local variable name in the generated parser, and the optional `max` tag.
+//
+// `max` carries a draft-18 upper bound that the receiver MUST enforce by
+// closing the session: a byte length for tlv_bytes and tlv_string (Reason
+// Phrase is 1024, New Session URI 8192), an element count for ntlv_bytes (a
+// Track Namespace holds at most 32 fields). Without the tag no bound is
+// generated beyond what the message body itself implies.
 func templateData(f reflect.StructField) map[string]string {
 	return map[string]string{
 		"Field": f.Name,
 		"Var":   strings.ToLower(f.Name[:1]) + f.Name[1:],
+		"Max":   f.Tag.Get("max"),
 	}
 }
 
