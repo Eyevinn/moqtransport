@@ -47,6 +47,28 @@ const (
 	ControlMessageTypePublishOk ControlMessageType = 0x1E
 )
 
+// OpensRequestStream reports whether t is one of the seven message types that
+// may be the first message on a bidirectional stream
+// (draft-ietf-moq-transport-18, Section 3.3).
+//
+// A bidirectional stream beginning with anything else is a PROTOCOL_VIOLATION,
+// including a message type that is perfectly valid later on the same stream:
+// REQUEST_OK opening a stream is as much a violation as an unknown codepoint,
+// so dispatch has to ask this question separately from "do I know this type".
+func (t ControlMessageType) OpensRequestStream() bool {
+	switch t {
+	case ControlMessageTypeTrackStatus,
+		ControlMessageTypeSubscribe,
+		ControlMessageTypePublish,
+		ControlMessageTypeFetch,
+		ControlMessageTypePublishNamespace,
+		ControlMessageTypeSubscribeNamespace,
+		ControlMessageTypeSubscribeTracks:
+		return true
+	}
+	return false
+}
+
 func (t ControlMessageType) String() string {
 	switch t {
 	case ControlMessageTypeSetup:
