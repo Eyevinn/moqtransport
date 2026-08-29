@@ -62,3 +62,82 @@ func KnownSetupOption(typ uint64) bool {
 	_, ok := setupOptionNames[typ]
 	return ok
 }
+
+// PathOption returns the PATH Setup Option, the path-abempty portion of a
+// moqt:// URI with the query appended after a '?' if present (Section
+// 10.3.1.2). It is for native QUIC only: a server that sends one, or anyone
+// who sends one over WebTransport, MUST have the session closed.
+func PathOption(path string) KeyValuePair {
+	return KeyValuePair{Type: SetupOptionPath, ValueBytes: []byte(path)}
+}
+
+// AuthorityOption returns the AUTHORITY Setup Option, the authority portion of
+// a moqt:// URI (Section 10.3.1.1). Native QUIC and clients only, like PATH.
+func AuthorityOption(authority string) KeyValuePair {
+	return KeyValuePair{Type: SetupOptionAuthority, ValueBytes: []byte(authority)}
+}
+
+// MaxAuthTokenCacheSizeOption returns the MAX_AUTH_TOKEN_CACHE_SIZE option, the
+// bytes of registered authorization tokens the sender will hold for this
+// session. Omitting it means 0, which forbids token aliases entirely.
+func MaxAuthTokenCacheSizeOption(size uint64) KeyValuePair {
+	return KeyValuePair{Type: SetupOptionMaxAuthTokenCacheSize, ValueVarInt: size}
+}
+
+// ImplementationOption returns the MOQT_IMPLEMENTATION option naming the
+// sender's implementation and version. The draft says endpoints SHOULD send
+// one: it is what makes an interop failure attributable.
+func ImplementationOption(name string) KeyValuePair {
+	return KeyValuePair{Type: SetupOptionMOQTImplementation, ValueBytes: []byte(name)}
+}
+
+// Path returns the PATH option's value.
+func (m *Setup) Path() (string, bool) { return m.stringOption(SetupOptionPath) }
+
+// Authority returns the AUTHORITY option's value.
+func (m *Setup) Authority() (string, bool) { return m.stringOption(SetupOptionAuthority) }
+
+// Implementation returns the MOQT_IMPLEMENTATION option's value.
+func (m *Setup) Implementation() (string, bool) {
+	return m.stringOption(SetupOptionMOQTImplementation)
+}
+
+// MaxAuthTokenCacheSize returns the peer's token cache budget. The default when
+// the option is absent is 0, which prohibits token aliases.
+func (m *Setup) MaxAuthTokenCacheSize() uint64 {
+	if p, ok := m.Options.Get(SetupOptionMaxAuthTokenCacheSize); ok {
+		return p.ValueVarInt
+	}
+	return 0
+}
+
+func (m *Setup) stringOption(typ uint64) (string, bool) {
+	p, ok := m.Options.Get(typ)
+	if !ok {
+		return "", false
+	}
+	return string(p.ValueBytes), true
+}
+
+// ValidateSetup checks the options a peer sent against the rules that depend
+// on who sent them and over what transport.
+//
+// PATH and AUTHORITY are for a client on native QUIC only. Receiving either
+// from a server, or over WebTransport, is a session error: the URI is carried
+// by the transport there, so the option is meaningless and possibly an attempt
+// to reach a different origin. Unknown options are not checked at all -- they
+// MUST be ignored.
+func ValidateSetup(m *Setup, fromClient bool, webTransport bool) error {
+	for _, typ := range []uint64{SetupOptionPath, SetupOptionAuthority} {
+		if _, ok := m.Options.Get(typ); !ok {
+			continue
+		}
+		if !fromClient {
+			return setupOptionError{option: typ, reason: "sent by a server"}
+		}
+		if webTransport {
+			return setupOptionError{option: typ, reason: "sent over WebTransport"}
+		}
+	}
+	return nil
+}
