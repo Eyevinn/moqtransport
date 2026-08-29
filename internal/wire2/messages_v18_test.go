@@ -10,8 +10,8 @@ import (
 
 // newMessage returns a fresh zero value of the same concrete type as m, so a
 // round trip parses into a message that shares nothing with the original.
-func newMessage(m messageV18) messageV18 {
-	return reflect.New(reflect.TypeOf(m).Elem()).Interface().(messageV18)
+func newMessage(m MessageV18) MessageV18 {
+	return reflect.New(reflect.TypeOf(m).Elem()).Interface().(MessageV18)
 }
 
 // TestRoundTripV18 encodes each message and parses the bytes back, which pins
@@ -26,7 +26,7 @@ func TestRoundTripV18(t *testing.T) {
 
 	cases := []struct {
 		name string
-		msg  messageV18
+		msg  MessageV18
 	}{
 		{"Setup", &Setup{Options: KVPList{{Type: 1, ValueBytes: []byte("/path")}, {Type: 2, ValueVarInt: 100}}}},
 		{"Setup empty", &Setup{Options: KVPList{}}},
