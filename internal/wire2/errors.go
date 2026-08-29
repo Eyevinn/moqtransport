@@ -93,6 +93,17 @@ func (e propertyScopeError) Error() string {
 	return fmt.Sprintf("property %s is not allowed in %s scope", PropertyName(e.propertyType), where)
 }
 
+// setupOptionError is returned for a Setup Option used where the draft forbids
+// it. Unlike an unknown option, which MUST be ignored, these close the session.
+type setupOptionError struct {
+	option uint64
+	reason string
+}
+
+func (e setupOptionError) Error() string {
+	return fmt.Sprintf("setup option %s %s", SetupOptionName(e.option), e.reason)
+}
+
 // unknownStreamTypeError is returned for a unidirectional stream whose leading
 // varint is not in Table 3. The session MUST be closed.
 type unknownStreamTypeError struct {
