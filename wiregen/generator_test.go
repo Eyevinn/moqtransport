@@ -16,8 +16,8 @@ type allTags struct {
 	Ignored        string   `json:"ignored"`
 	RequestID      uint64   `proto:"varint"`
 	TrackName      []byte   `proto:"tlv_bytes"`
-	ErrorReason    string   `proto:"tlv_string"`
-	TrackNamespace [][]byte `proto:"ntlv_bytes"`
+	ErrorReason    string   `proto:"tlv_string" max:"1024"`
+	TrackNamespace [][]byte `proto:"ntlv_bytes" max:"32"`
 	EndOfTrack     bool     `proto:"bool"`
 	EndLocation    Location `proto:"moq_location"`
 	Parameters     KVPList  `proto:"moq_kvp_list"`
