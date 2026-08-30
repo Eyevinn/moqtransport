@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // Version identifies the MOQT draft a session speaks.
@@ -67,6 +69,13 @@ type Session struct {
 	// its logs. It has no protocol meaning.
 	Implementation string
 
+	// Qlogger receives qlog events for everything this session sends and
+	// receives: control messages, data stream types, Objects and datagrams.
+	// Nil disables it, which costs nothing beyond a nil check.
+	//
+	// Build one with qlog.NewQLOGHandler, passing [QlogSchema].
+	Qlogger *qlog.Logger
+
 	// MaxPendingStreams bounds how many streams are buffered while the control
 	// streams are still being established. Zero uses a default. Section 3.3
 	// says such streams SHOULD be buffered and MAY be reset instead; the bound
@@ -77,6 +86,7 @@ type Session struct {
 	conn    Connection
 	version wire2.Version
 	control *controlStreamPair
+	qlog    qlogger
 
 	requestIDs *requestIDGenerator
 	peerIDs    *peerRequestIDs
@@ -132,7 +142,8 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 
 	s.conn = conn
 	s.version = version
-	s.control = newControlStreamPair()
+	s.qlog = qlogger{logger: s.Qlogger}
+	s.control = newControlStreamPair(s.qlog)
 	s.requestIDs = newRequestIDGenerator(conn.Perspective())
 	s.peerIDs = newPeerRequestIDs(conn.Perspective())
 	s.remote = newRemoteTrackIndex()
@@ -270,7 +281,7 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	rt := newRemoteTrack(rs, s, msg.RequestID, namespace, track)
 
 	// The reader starts before the request goes out: the publisher may answer
@@ -447,6 +458,7 @@ func (s *Session) handleUniStream(stream ReceiveStream) {
 func (s *Session) dispatchUniStream(u pendingUniStream) {
 	switch u.kind {
 	case wire2.UniStreamSubgroup:
+		s.qlog.logStreamType(moqt.OwnerRemote, u.stream, moqt.StreamTypeSubgroupHeader)
 		s.handleSubgroupStream(u.stream, u.reader, u.streamType)
 	case wire2.UniStreamPadding:
 		// Padding carries nothing. Read it away so the sender's flow control
@@ -454,6 +466,7 @@ func (s *Session) dispatchUniStream(u pendingUniStream) {
 		// is of no interest either way.
 		_, _ = io.Copy(io.Discard, u.reader)
 	case wire2.UniStreamFetch:
+		s.qlog.logStreamType(moqt.OwnerRemote, u.stream, moqt.StreamTypeFetchHeader)
 		s.handleFetchStream(u.stream, u.reader)
 	}
 }
@@ -485,7 +498,7 @@ func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reade
 		return
 	}
 
-	receiver := newSubgroupReceiver(stream, header, reader, tracks[0].defaultPriority())
+	receiver := newSubgroupReceiver(stream, header, reader, tracks[0].defaultPriority(), s.qlog)
 	err = receiver.receive(func(o *Object) error {
 		for _, t := range tracks {
 			if err := t.deliver(s.ctx, o); err != nil {
@@ -522,7 +535,7 @@ func (s *Session) acceptBidiStreams() {
 }
 
 func (s *Session) handleBidiStream(stream Stream) {
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	msg, err := rs.readRequest()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -650,6 +663,7 @@ func (s *Session) receiveDatagrams() {
 			s.fail(err)
 			return
 		}
+		s.qlog.logDatagram(moqt.ObjectDatagramEventparsed, datagram)
 
 		// Unlike a subgroup stream there is nothing to hold open here, so a
 		// datagram for an alias we do not know is dropped rather than waited

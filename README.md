@@ -25,9 +25,13 @@ type are implemented and tested end to end over an in-process transport:
 - SUBSCRIBE, FETCH (including joining fetches), TRACK_STATUS,
   PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE, in both directions
 
+Every request type is logged to qlog when a `Session.Qlogger` is set: control
+messages both ways, data stream types, Objects on subgroup and fetch streams,
+and datagrams.
+
 Not yet done: incoming PUBLISH and SUBSCRIBE_TRACKS, which are answered with
-`NOT_SUPPORTED`; GOAWAY-driven session migration, which is read and ignored;
-and the downstream move of `moqlivemock`.
+`NOT_SUPPORTED`, and GOAWAY-driven session migration, which is read and
+ignored.
 
 ## Design
 

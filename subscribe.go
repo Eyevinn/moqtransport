@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // SubscribeHandler answers SUBSCRIBE requests from the peer.
@@ -436,7 +437,7 @@ func (s *Subscription) OpenSubgroup(groupID, subgroupID uint64, priority uint8, 
 	if err != nil {
 		return nil, err
 	}
-	sg, err := newSubgroup(stream, header)
+	sg, err := newSubgroup(stream, header, s.qlog)
 	if err != nil {
 		stream.Reset(uint32(StreamErrorInternal))
 		return nil, err
@@ -453,7 +454,7 @@ func (s *Subscription) OpenSubgroup(groupID, subgroupID uint64, priority uint8, 
 // SendDatagram sends one Object as a datagram. The Object's Subgroup ID is
 // ignored: a datagram Object has no Subgroup.
 func (s *Subscription) SendDatagram(o Object) error {
-	buf, err := wire2.AppendObjectDatagram(nil, &wire2.ObjectDatagram{
+	datagram := &wire2.ObjectDatagram{
 		TrackAlias: s.trackAlias,
 		GroupID:    o.GroupID,
 		ObjectID:   o.ObjectID,
@@ -461,11 +462,16 @@ func (s *Subscription) SendDatagram(o Object) error {
 		Properties: o.Properties,
 		Status:     o.Status,
 		Payload:    o.Payload,
-	})
+	}
+	buf, err := wire2.AppendObjectDatagram(nil, datagram)
 	if err != nil {
 		return err
 	}
-	return s.session.sendDatagram(buf)
+	if err := s.session.sendDatagram(buf); err != nil {
+		return err
+	}
+	s.qlog.logDatagram(moqt.ObjectDatagramEventCreated, datagram)
+	return nil
 }
 
 // Close ends the subscription gracefully: PUBLISH_DONE followed by a FIN, as

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // Subgroup is an open subgroup stream: one unidirectional stream carrying
@@ -20,12 +21,13 @@ type Subgroup struct {
 	writeMu sync.Mutex
 	stream  SendStream
 	writer  *wire2.SubgroupWriter
+	qlog    qlogger
 	done    bool
 }
 
 // newSubgroup opens a subgroup stream by writing its header, which is also the
 // stream's type varint.
-func newSubgroup(stream SendStream, header *wire2.SubgroupHeader) (*Subgroup, error) {
+func newSubgroup(stream SendStream, header *wire2.SubgroupHeader, logger qlogger) (*Subgroup, error) {
 	buf, err := wire2.AppendSubgroupHeader(nil, header)
 	if err != nil {
 		return nil, err
@@ -33,9 +35,11 @@ func newSubgroup(stream SendStream, header *wire2.SubgroupHeader) (*Subgroup, er
 	if _, err := stream.Write(buf); err != nil {
 		return nil, err
 	}
+	logger.logStreamType(moqt.OwnerLocal, stream, moqt.StreamTypeSubgroupHeader)
 	return &Subgroup{
 		stream: stream,
 		writer: wire2.NewSubgroupWriter(header),
+		qlog:   logger,
 	}, nil
 }
 
@@ -92,8 +96,11 @@ func (s *Subgroup) write(obj *wire2.SubgroupObject) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.stream.Write(buf)
-	return err
+	if _, err := s.stream.Write(buf); err != nil {
+		return err
+	}
+	s.qlog.logSubgroupObject(moqt.SubgroupObjectEventCreated, s.stream, s.writer.Header, obj)
+	return nil
 }
 
 // Close finishes the subgroup with a FIN, which tells the subscriber that
@@ -138,13 +145,17 @@ type subgroupReceiver struct {
 	// Publisher Priority field: the priority from the control message that
 	// established the subscription.
 	defaultPriority uint8
+
+	qlog qlogger
 }
 
-func newSubgroupReceiver(stream ReceiveStream, header *wire2.SubgroupHeader, r dataStreamReader, defaultPriority uint8) *subgroupReceiver {
+func newSubgroupReceiver(stream ReceiveStream, header *wire2.SubgroupHeader, r dataStreamReader,
+	defaultPriority uint8, logger qlogger) *subgroupReceiver {
 	return &subgroupReceiver{
 		stream:          stream,
 		reader:          wire2.NewSubgroupReader(header, r),
 		defaultPriority: defaultPriority,
+		qlog:            logger,
 	}
 }
 
@@ -169,6 +180,7 @@ func (s *subgroupReceiver) receive(deliver func(*Object) error) error {
 			}
 			return err
 		}
+		s.qlog.logSubgroupObject(moqt.SubgroupObjectEventParsed, s.stream, header, obj)
 		if err := deliver(&Object{
 			GroupID:              header.GroupID,
 			ObjectID:             obj.ObjectID,

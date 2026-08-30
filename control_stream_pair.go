@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // controlStreamPair owns the two unidirectional streams that carry control
@@ -35,6 +36,8 @@ type controlStreamPair struct {
 	// depends on knowing the peer's options waits on it, and closing a channel
 	// rather than setting a flag means the wait is race-free without a lock on
 	// the read path.
+	qlog qlogger
+
 	ready     chan struct{}
 	readyOnce sync.Once
 
@@ -47,8 +50,8 @@ type controlStreamPair struct {
 	remoteErr     error
 }
 
-func newControlStreamPair() *controlStreamPair {
-	return &controlStreamPair{ready: make(chan struct{})}
+func newControlStreamPair(logger qlogger) *controlStreamPair {
+	return &controlStreamPair{qlog: logger, ready: make(chan struct{})}
 }
 
 // open opens our control stream and sends setup on it.
@@ -69,6 +72,7 @@ func (p *controlStreamPair) open(ctx context.Context, conn Connection, setup *wi
 	if _, err := stream.Write(buf); err != nil {
 		return fmt.Errorf("sending SETUP: %w", err)
 	}
+	p.qlog.logControlMessage(moqt.ControlMessageEventCreated, stream, setup)
 
 	p.local = stream
 	return nil
@@ -84,8 +88,11 @@ func (p *controlStreamPair) write(msg wire2.MessageV18) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.local.Write(buf)
-	return err
+	if _, err := p.local.Write(buf); err != nil {
+		return err
+	}
+	p.qlog.logControlMessage(moqt.ControlMessageEventCreated, p.local, msg)
+	return nil
 }
 
 // adoptRemote takes a unidirectional stream the peer opened whose type varint
@@ -119,6 +126,7 @@ func (p *controlStreamPair) adoptRemote(stream ReceiveStream, parser *wire2.Cont
 	p.mu.Lock()
 	p.peerSetup = setup
 	p.mu.Unlock()
+	p.qlog.logControlMessage(moqt.ControlMessageEventParsed, stream, setup)
 	p.readyOnce.Do(func() { close(p.ready) })
 	return nil
 }
@@ -132,7 +140,15 @@ func (p *controlStreamPair) read() (wire2.ControlMessage, error) {
 	if parser == nil {
 		return nil, errControlStreamNotOpen
 	}
-	return parser.Parse()
+	msg, err := parser.Parse()
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	stream := p.remote
+	p.mu.Unlock()
+	p.qlog.logControlMessage(moqt.ControlMessageEventParsed, stream, msg)
+	return msg, nil
 }
 
 // failRemote records why the peer's control stream ended and releases anything

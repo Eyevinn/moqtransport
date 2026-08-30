@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // StreamErrorCode is the application error code an endpoint sends with
@@ -97,6 +98,7 @@ func (c StreamErrorCode) String() string {
 type requestStream struct {
 	stream Stream
 	parser *wire2.ControlMessageParser
+	qlog   qlogger
 
 	ctx       context.Context
 	cancelCtx context.CancelCauseFunc
@@ -113,11 +115,12 @@ type requestStream struct {
 
 // newRequestStream wraps an already-open bidirectional stream. parent is the
 // session's context, so a session that ends cancels every request it carries.
-func newRequestStream(parent context.Context, stream Stream) *requestStream {
+func newRequestStream(parent context.Context, stream Stream, logger qlogger) *requestStream {
 	ctx, cancel := context.WithCancelCause(parent)
 	return &requestStream{
 		stream:    stream,
 		parser:    wire2.NewControlMessageParser(stream, wire2.ScopeRequest),
+		qlog:      logger,
 		ctx:       ctx,
 		cancelCtx: cancel,
 	}
@@ -147,8 +150,11 @@ func (r *requestStream) write(msg wire2.MessageV18) error {
 	if r.sendDone {
 		return errRequestStreamSendClosed
 	}
-	_, err = r.stream.Write(buf)
-	return err
+	if _, err := r.stream.Write(buf); err != nil {
+		return err
+	}
+	r.qlog.logControlMessage(moqt.ControlMessageEventCreated, r.stream, msg)
+	return nil
 }
 
 // closeSend finishes our half of the stream: the peer sees a FIN, we send
@@ -209,7 +215,12 @@ func (r *requestStream) cancel(code StreamErrorCode, cause error) {
 // stream: the message that opens a request stream is what says which kind of
 // request it is.
 func (r *requestStream) readMessage() (wire2.ControlMessage, error) {
-	return r.parser.Parse()
+	msg, err := r.parser.Parse()
+	if err != nil {
+		return nil, err
+	}
+	r.qlog.logControlMessage(moqt.ControlMessageEventParsed, r.stream, msg)
+	return msg, nil
 }
 
 // readRequest reads the message that opens the stream, rejecting anything that
