@@ -148,6 +148,53 @@ func TestQlogRendersMessageFields(t *testing.T) {
 	assert.NotNil(t, message["parameters"], "parameters are rendered, not dropped")
 }
 
+// An Object's payload is truncated in the log while its stated length stays
+// the real one, so a qlog of a media session does not become a copy of the
+// media. Control message byte fields are left whole -- they are small, and
+// they are what somebody reading a log is usually after.
+func TestQlogTruncatesObjectPayloads(t *testing.T) {
+	var log bytes.Buffer
+	logger := qlogger{logger: qlog.NewQLOGHandler(&log, "test", "test", "client", QlogSchema)}
+
+	payload := bytes.Repeat([]byte("x"), maxQlogPayloadBytes*3)
+	logger.logSubgroupObject("subgroup_object_created", fakeStream{id: 8},
+		&wire2.SubgroupHeader{GroupID: 1, SubgroupID: 0},
+		&wire2.SubgroupObject{ObjectID: 2, Payload: payload})
+
+	events := qlogEvents(t, log.Bytes())
+	require.NotEmpty(t, events)
+	data, ok := events[len(events)-1]["data"].(map[string]any)
+	require.True(t, ok, "event has no data")
+
+	assert.Equal(t, float64(len(payload)), data["object_payload_length"],
+		"the stated length is the whole Object")
+
+	raw, ok := data["object_payload"].(map[string]any)
+	require.True(t, ok, "event has no object_payload: %v", data)
+	assert.Equal(t, float64(len(payload)), raw["length"], "and so is the RawInfo length")
+	logged, ok := raw["data"].(string)
+	require.True(t, ok, "object_payload has no data: %v", raw)
+	assert.Len(t, logged, maxQlogPayloadBytes*2, "hex, so two characters per byte")
+}
+
+// A payload shorter than the cap is logged whole.
+func TestQlogKeepsShortPayloadsWhole(t *testing.T) {
+	var log bytes.Buffer
+	logger := qlogger{logger: qlog.NewQLOGHandler(&log, "test", "test", "client", QlogSchema)}
+
+	payload := []byte("short")
+	logger.logSubgroupObject("subgroup_object_created", fakeStream{id: 8},
+		&wire2.SubgroupHeader{GroupID: 1, SubgroupID: 0},
+		&wire2.SubgroupObject{ObjectID: 2, Payload: payload})
+
+	events := qlogEvents(t, log.Bytes())
+	require.NotEmpty(t, events)
+	data := events[len(events)-1]["data"].(map[string]any)
+	raw := data["object_payload"].(map[string]any)
+	assert.Equal(t, float64(len(payload)), raw["length"])
+	assert.Len(t, raw["data"].(string), len(payload)*2)
+}
+
 // A message type nobody wrote a renderer for still logs its fields, which is
 // the point of reading them reflectively: a draft-20 message set is covered
 // the day it is declared.

@@ -100,7 +100,7 @@ func (q qlogger) logSubgroupObject(name moqt.SubgroupObjectEventName, stream str
 		ExtensionHeaders:       propertiesToQlog(obj.Properties),
 		ObjectPayloadLength:    uint64(len(obj.Payload)),
 		ObjectStatus:           uint64(obj.Status),
-		ObjectPayload:          rawInfo(obj.Payload),
+		ObjectPayload:          payloadRawInfo(obj.Payload),
 	})
 }
 
@@ -118,7 +118,7 @@ func (q qlogger) logDatagram(name moqt.ObjectDatagramEventName, d *wire2.ObjectD
 		ExtensionHeadersLength: uint64(len(d.Properties)),
 		ExtensionHeaders:       propertiesToQlog(d.Properties),
 		ObjectStatus:           uint64(d.Status),
-		Payload:                rawInfo(d.Payload),
+		Payload:                payloadRawInfo(d.Payload),
 	})
 }
 
@@ -137,7 +137,7 @@ func (q qlogger) logFetchObject(name moqt.FetchObjectEventName, stream streamIde
 		ExtensionHeadersLength: uint64(len(obj.Properties)),
 		ExtensionHeaders:       propertiesToQlog(obj.Properties),
 		ObjectPayloadLength:    uint64(len(obj.Payload)),
-		ObjectPayload:          rawInfo(obj.Payload),
+		ObjectPayload:          payloadRawInfo(obj.Payload),
 	})
 }
 
@@ -275,6 +275,24 @@ func rawInfo(data []byte) qlog.RawInfo {
 		PayloadLength: uint64(len(data)),
 		Data:          data,
 	}
+}
+
+// maxQlogPayloadBytes is how much of an Object's payload reaches the log.
+//
+// A qlog of a media session otherwise writes every frame to disk, which is
+// both enormous and useless: what a reader wants from a payload is enough to
+// recognise it, not the frame itself. Control messages are not truncated --
+// they are small, and their byte fields are the thing being debugged.
+const maxQlogPayloadBytes = 20
+
+// payloadRawInfo is rawInfo for media payloads: Length and PayloadLength are
+// the true size, Data holds at most maxQlogPayloadBytes of it.
+func payloadRawInfo(data []byte) qlog.RawInfo {
+	info := rawInfo(data)
+	if len(data) > maxQlogPayloadBytes {
+		info.Data = data[:maxQlogPayloadBytes]
+	}
+	return info
 }
 
 // propertiesToQlog renders Object Properties for the object events.
