@@ -14,17 +14,22 @@ Drafts 14 and 16 are **not** supported. draft-17 changed the varint encoding, mo
 
 ## Status
 
-The draft-18 rewrite is in progress on the `draft-18` branch, and that branch does not yet speak the protocol end to end. Landed so far:
+The draft-18 rewrite is on the `draft-18` branch. The session and every request
+type are implemented and tested end to end over an in-process transport:
 
 - the `vi64` wire format, the message codecs and their generator
-- the Message Parameter, Setup Option and Property registries, and subscription filters
-- control message framing and stream-scoped dispatch
-- the SETUP control stream pair, with pre-setup stream buffering
-- per-request bidirectional streams and their lifetime
-- the subgroup, datagram and FETCH object data-plane codecs
-- the incoming SUBSCRIBE handler API
+- the Message Parameter, Setup Option and Property registries, and subscription
+  filters
+- the SETUP control stream pair, per-request bidirectional streams, and the
+  subgroup, datagram and FETCH data planes
+- SUBSCRIBE, FETCH (including joining fetches), TRACK_STATUS,
+  PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE, in both directions
 
-Still to come: the session itself, the outgoing subscribe path, FETCH, the namespace and track-status requests, the examples and the integration tests. The branch merges to `main` when the integration suite passes end to end.
+Not yet done: incoming PUBLISH and SUBSCRIBE_TRACKS, which are answered with
+`NOT_SUPPORTED`; GOAWAY-driven session migration, which is read and ignored;
+the examples and the integration tests against a real QUIC stack, which were
+deleted with the old session; and the downstream move of `moqlivemock`. The
+branch merges to `main` when the integration suite passes end to end.
 
 ## Design
 
@@ -36,7 +41,7 @@ Three things about draft-18 shape the API, and none of them is cosmetic.
 
 **Requests carry their own updates.** `REQUEST_UPDATE` travels on the stream of the request it updates, so it belongs to the subscription rather than to the session.
 
-The handler side of that, once the session type lands:
+The handler side of that:
 
 ```go
 session.SubscribeHandler = moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
