@@ -34,6 +34,10 @@ type Session struct {
 	// by which a peer asks which namespaces match a prefix.
 	SubscribeNamespaceHandler SubscribeNamespaceHandler
 
+	// TrackStatusHandler answers incoming TRACK_STATUS requests, by which a
+	// peer asks about a track without subscribing to it.
+	TrackStatusHandler TrackStatusHandler
+
 	// Path is the PATH Setup Option, the path-abempty portion of a moqt:// URI.
 	// It is for native QUIC clients only: a server that sends one, or anyone
 	// who sends one over WebTransport, has the session closed.
@@ -458,6 +462,12 @@ func (s *Session) handleBidiStream(stream Stream) {
 	case *wire2.Subscribe:
 		req := newSubscribeRequest(rs, s, m)
 		if err := req.serve(s.SubscribeHandler); err != nil {
+			s.failIfProtocolError(err)
+		}
+
+	case *wire2.TrackStatus:
+		req := newTrackStatusRequest(rs, m)
+		if err := req.serve(s.TrackStatusHandler); err != nil {
 			s.failIfProtocolError(err)
 		}
 

@@ -160,6 +160,9 @@ func (p *NamespacePublication) run() error {
 func (p *NamespacePublication) handleMessage(msg wire2.ControlMessage) error {
 	switch m := msg.(type) {
 	case *wire2.RequestOk:
+		if len(m.TrackProperties) > 0 {
+			return errUnexpectedTrackProperties
+		}
 		p.establishOnce.Do(func() { close(p.established) })
 		return nil
 	case *wire2.RequestError:
@@ -455,6 +458,9 @@ func (n *NamespaceSubscription) run() error {
 func (n *NamespaceSubscription) handleMessage(msg wire2.ControlMessage) error {
 	switch m := msg.(type) {
 	case *wire2.RequestOk:
+		if len(m.TrackProperties) > 0 {
+			return errUnexpectedTrackProperties
+		}
 		n.establishOnce.Do(func() { close(n.established) })
 		return nil
 
