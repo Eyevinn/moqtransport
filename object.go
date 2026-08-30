@@ -23,6 +23,22 @@ type (
 
 	// GroupOrder is the order Groups are delivered in.
 	GroupOrder = wire2.GroupOrder
+
+	// Parameters is a Message Parameter block. Draft-18 moved almost
+	// everything out of the message bodies and into these, so this is where a
+	// request's semantics live.
+	Parameters = wire2.Parameters
+
+	// Parameter is one Message Parameter.
+	Parameter = wire2.Parameter
+
+	// SubscriptionFilter selects which Objects of a Track a subscription
+	// delivers.
+	SubscriptionFilter = wire2.SubscriptionFilter
+
+	// FilterType is a Subscription Filter's type, which also decides which of
+	// the filter's fields are present.
+	FilterType = wire2.FilterType
 )
 
 const (
@@ -38,6 +54,23 @@ const (
 	GroupOrderAscending = wire2.GroupOrderAscending
 	// GroupOrderDescending delivers Groups in decreasing Group ID order.
 	GroupOrderDescending = wire2.GroupOrderDescending
+
+	// FilterNextGroupStart starts at the beginning of the next Group and is
+	// open ended.
+	FilterNextGroupStart = wire2.FilterNextGroupStart
+	// FilterLargestObject starts just past the largest Object the publisher
+	// has and is open ended. A Joining FETCH requires this filter of the
+	// subscription it joins.
+	FilterLargestObject = wire2.FilterLargestObject
+	// FilterAbsoluteStart starts at an explicit Location and is open ended.
+	FilterAbsoluteStart = wire2.FilterAbsoluteStart
+	// FilterAbsoluteRange starts at an explicit Location and ends at a Group
+	// derived from it.
+	FilterAbsoluteRange = wire2.FilterAbsoluteRange
+
+	// DefaultSubscriberPriority is what applies when SUBSCRIBER_PRIORITY is
+	// omitted.
+	DefaultSubscriberPriority = wire2.DefaultSubscriberPriority
 )
 
 // ObjectForwardingPreference is how a publisher sends an Object
