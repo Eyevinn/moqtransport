@@ -50,6 +50,10 @@ type publisherSession interface {
 
 	// unregisterSubscription drops that index entry when the subscription ends.
 	unregisterSubscription(requestID uint64)
+
+	// priorityMapper is how this session reduces a MOQT priority to one the
+	// transport understands.
+	priorityMapper() PriorityMapper
 }
 
 // SubscribeRequest is an incoming SUBSCRIBE, and the bidirectional stream that
@@ -149,6 +153,16 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	if err != nil {
 		return nil, err
 	}
+	groupOrder, present, err := params.GroupOrder()
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		// Section 10.2.8: omitted from a SUBSCRIBE, the publisher's own
+		// preference for the Track applies. Nothing here tracks one, so it is
+		// Ascending, which is also the DEFAULT_PUBLISHER_GROUP_ORDER default.
+		groupOrder = GroupOrderAscending
+	}
 	filter, hasFilter, err := params.Filter()
 	if err != nil {
 		return nil, err
@@ -170,6 +184,7 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		track:         r.track,
 		requestID:     r.requestID,
 		priority:      priority,
+		groupOrder:    groupOrder,
 		forward:       forward,
 		filter:        filter,
 		hasFilter:     hasFilter,
@@ -299,6 +314,7 @@ type Subscription struct {
 
 	mu          sync.Mutex
 	priority    uint8
+	groupOrder  GroupOrder
 	forward     bool
 	filter      wire2.SubscriptionFilter
 	hasFilter   bool
@@ -372,6 +388,10 @@ func (s *Subscription) Forward() bool {
 	return s.forward
 }
 
+// GroupOrder is the order Groups are delivered in for this subscription. It
+// cannot change once the subscription is established.
+func (s *Subscription) GroupOrder() GroupOrder { return s.groupOrder }
+
 // Filter returns the Subscription Filter currently in effect, and whether
 // there is one.
 func (s *Subscription) Filter() (SubscriptionFilter, bool) {
@@ -437,6 +457,16 @@ func (s *Subscription) OpenSubgroup(groupID, subgroupID uint64, priority uint8, 
 	if err != nil {
 		return nil, err
 	}
+	// Section 7.2 orders this stream against every other schedulable object on
+	// the session. Hand the transport what it can use of that ordering; a
+	// transport that cannot schedule ignores it.
+	applyPriority(stream, s.session.priorityMapper(), ObjectPriority{
+		SubscriberPriority: s.SubscriberPriority(),
+		PublisherPriority:  header.Priority,
+		GroupOrder:         s.groupOrder,
+		GroupID:            groupID,
+		SubgroupID:         subgroupID,
+	})
 	sg, err := newSubgroup(stream, header, s.qlog)
 	if err != nil {
 		stream.Reset(uint32(StreamErrorInternal))

@@ -76,6 +76,13 @@ type Session struct {
 	// Build one with qlog.NewQLOGHandler, passing [QlogSchema].
 	Qlogger *qlog.Logger
 
+	// PriorityMapper reduces a MOQT priority to the transport's, for every data
+	// stream this session opens. Nil uses [DefaultPriorityMapper].
+	//
+	// The reduction is lossy -- see priority.go -- so which distinctions
+	// survive is an application's choice, not a default worth hiding.
+	PriorityMapper PriorityMapper
+
 	// MaxPendingStreams bounds how many streams are buffered while the control
 	// streams are still being established. Zero uses a default. Section 3.3
 	// says such streams SHOULD be buffered and MAY be reset instead; the bound
@@ -374,6 +381,14 @@ func (s *Session) fetchByRequestID(requestID uint64) (*FetchStream, bool) {
 	defer s.mu.Unlock()
 	f, ok := s.outgoingFetches[requestID]
 	return f, ok
+}
+
+// priorityMapper implements publisherSession.
+func (s *Session) priorityMapper() PriorityMapper {
+	if s.PriorityMapper == nil {
+		return DefaultPriorityMapper
+	}
+	return s.PriorityMapper
 }
 
 // openUniStream implements publisherSession.

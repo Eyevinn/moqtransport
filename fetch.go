@@ -56,6 +56,10 @@ type FetchObject struct {
 type fetchSession interface {
 	openUniStream(ctx context.Context) (SendStream, error)
 
+	// priorityMapper is how this session reduces a MOQT priority to one the
+	// transport understands.
+	priorityMapper() PriorityMapper
+
 	// subscriptionByRequestID finds a peer-initiated subscription, which is
 	// what a Joining FETCH names.
 	subscriptionByRequestID(requestID uint64) (*Subscription, bool)
@@ -145,6 +149,14 @@ func (r *FetchRequest) Accept(opts ...FetchOkOption) (*FetchResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A FETCH response is one stream carrying objects that may have different
+	// publisher priorities (Section 7.1), so the stream can only be scheduled
+	// on what the request fixes: the subscriber priority and the group order.
+	applyPriority(stream, r.session.priorityMapper(), ObjectPriority{
+		SubscriberPriority: r.Parameters().SubscriberPriority(),
+		PublisherPriority:  wire2.DefaultPublisherPriority,
+		GroupOrder:         r.order,
+	})
 	header := wire2.AppendFetchHeader(nil, r.requestID)
 	if _, err := stream.Write(header); err != nil {
 		stream.Reset(uint32(StreamErrorInternal))
