@@ -23,8 +23,16 @@ import (
 type Session struct {
 	// SubscribeHandler answers incoming SUBSCRIBE requests. A nil handler
 	// rejects them with NOT_SUPPORTED, which is a legitimate answer and better
-	// than leaving the peer waiting.
+	// than leaving the peer waiting. The same goes for the two below.
 	SubscribeHandler SubscribeHandler
+
+	// PublishNamespaceHandler answers incoming PUBLISH_NAMESPACE requests, by
+	// which a peer advertises that it has tracks under a namespace.
+	PublishNamespaceHandler PublishNamespaceHandler
+
+	// SubscribeNamespaceHandler answers incoming SUBSCRIBE_NAMESPACE requests,
+	// by which a peer asks which namespaces match a prefix.
+	SubscribeNamespaceHandler SubscribeNamespaceHandler
 
 	// Path is the PATH Setup Option, the path-abempty portion of a moqt:// URI.
 	// It is for native QUIC clients only: a server that sends one, or anyone
@@ -52,6 +60,7 @@ type Session struct {
 
 	requestIDs *requestIDGenerator
 	remote     *remoteTrackIndex
+	prefixes   *prefixRegistry
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc
@@ -97,6 +106,7 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.control = newControlStreamPair()
 	s.requestIDs = newRequestIDGenerator(conn.Perspective())
 	s.remote = newRemoteTrackIndex()
+	s.prefixes = newPrefixRegistry()
 	s.localAliases = map[string]uint64{}
 	s.pendingUni = newPendingStreams[pendingUniStream](s.MaxPendingStreams)
 	s.pendingBidi = newPendingStreams[Stream](s.MaxPendingStreams)
@@ -448,6 +458,28 @@ func (s *Session) handleBidiStream(stream Stream) {
 	case *wire2.Subscribe:
 		req := newSubscribeRequest(rs, s, m)
 		if err := req.serve(s.SubscribeHandler); err != nil {
+			s.failIfProtocolError(err)
+		}
+
+	case *wire2.PublishNamespace:
+		req := newPublishNamespaceRequest(rs, m)
+		if err := req.serve(s.PublishNamespaceHandler); err != nil {
+			s.failIfProtocolError(err)
+		}
+
+	case *wire2.SubscribeNamespace:
+		req := newSubscribeNamespaceRequest(rs, m)
+		// The overlap rule is the library's to enforce, not the
+		// application's: Sections 10.18 and 10.19 make an overlapping prefix a
+		// REQUEST_ERROR rather than a decision. Reserving before the handler
+		// sees the request is what keeps two overlapping requests arriving
+		// together from both passing.
+		if !s.prefixes.reserve(req.Prefix()) {
+			req.Reject(RequestErrorPrefixOverlap, "prefix overlaps an established namespace subscription")
+			return
+		}
+		defer s.prefixes.release(req.Prefix())
+		if err := req.serve(s.SubscribeNamespaceHandler); err != nil {
 			s.failIfProtocolError(err)
 		}
 
