@@ -287,7 +287,11 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 
 	case *wire2.RequestOk:
 		// The answer to a REQUEST_UPDATE we sent. There is nothing in it that
-		// changes our own state: we already know what we asked for.
+		// changes our own state: we already know what we asked for. Track
+		// Properties belong only in a TRACK_STATUS_OK (Section 10.5).
+		if len(m.TrackProperties) > 0 {
+			return errUnexpectedTrackProperties
+		}
 		return nil
 	}
 	return errUnexpectedMessageOnRequestStream
@@ -512,6 +516,11 @@ func (i *remoteTrackIndex) await(ctx context.Context, alias uint64) ([]*RemoteTr
 
 var (
 	errSubscriptionClosedLocally = errors.New("subscription closed by the application")
+
+	errUnexpectedTrackProperties = ProtocolError{
+		code:    SessionErrorProtocolViolation,
+		message: "track properties in a REQUEST_OK that is not a TRACK_STATUS_OK",
+	}
 
 	errDuplicateResponse = ProtocolError{
 		code:    SessionErrorProtocolViolation,
