@@ -190,6 +190,43 @@ func TestFetchHistory(t *testing.T) {
 	}
 }
 
+// A joining FETCH names the subscription it joins instead of a range, and the
+// publisher works the range out from it. The point of that is this: what the
+// fetch returns and what the subscription delivers meet exactly, with no gap
+// at the join point and no Object delivered twice.
+//
+// A standalone FETCH cannot promise it. Issued before the SUBSCRIBE, its range
+// is a guess, and whatever is published between the two falls in between them.
+func TestJoiningFetchIsContiguousWithTheSubscription(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	addr := startServer(t, ctx)
+	const behind = 4
+	// Everything the fetch returns, and then two Objects from the live edge.
+	got := newCollector(behind + 3)
+	runSubscriber(t, ctx, addr, &moqHandler{join: behind, onObject: got.add}, false)
+
+	got.wait(t, ctx)
+	objects := got.collected()
+	checkTimestamps(t, objects)
+
+	for i := 1; i < len(objects); i++ {
+		previous, current := objects[i-1].GroupID, objects[i].GroupID
+		if current != previous+1 {
+			t.Fatalf("groups %d and %d are not consecutive: the fetch and the subscription %s",
+				previous, current,
+				map[bool]string{true: "overlap", false: "leave a gap"}[current <= previous])
+		}
+	}
+
+	// The fetch really did reach back: the run starts behind where the
+	// subscription alone would have.
+	if len(objects) < behind+1 {
+		t.Fatalf("got %d objects, want at least %d", len(objects), behind+1)
+	}
+}
+
 // A subscribe for a track the publisher does not have is refused, and the
 // refusal reaches the caller as a RequestError rather than a dropped session.
 func TestSubscribeUnknownTrack(t *testing.T) {

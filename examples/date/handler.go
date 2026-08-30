@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqtransport"
@@ -29,6 +30,7 @@ type moqHandler struct {
 	publish   bool
 	subscribe bool
 	fetch     uint64
+	join      uint64
 	pause     time.Duration
 
 	// onObject, when set, is called for every Object received. Nothing in the
@@ -267,7 +269,15 @@ func (h *moqHandler) handleFetch(r *moqtransport.FetchRequest) {
 		log.Printf("accepting fetch failed: %v", err)
 		return
 	}
-	log.Printf("serving fetch for groups %d..%d", start.Group, end.Group)
+	// The handler does not need to know which kind it is: a joining fetch
+	// arrives with its range already resolved against the subscription it
+	// names, so both look the same from here.
+	if joining, ok := r.Joining(); ok {
+		log.Printf("serving joining fetch for subscription %d: groups %d..%d",
+			joining, start.Group, end.Group)
+	} else {
+		log.Printf("serving fetch for groups %d..%d", start.Group, end.Group)
+	}
 
 	for group := start.Group; group <= end.Group && group <= now; group++ {
 		// A Start Location past the only Object in its Group excludes it.
@@ -307,8 +317,13 @@ func (h *moqHandler) handlePublishNamespace(r *moqtransport.PublishNamespaceRequ
 	log.Printf("peer announced namespace %v", r.Namespace())
 }
 
-// fetchHistory retrieves the seconds just before now, the way a player fills a
-// buffer before joining a live stream.
+// fetchHistory retrieves the seconds before now with a standalone FETCH, which
+// names an explicit range this endpoint worked out for itself.
+//
+// It runs before subscribing, so the range has to be guessed: there is no
+// subscription yet to be contiguous with, and whatever is published between
+// the fetch and the SUBSCRIBE falls in the gap between them. Compare
+// joiningFetch, which is the answer to that.
 func (h *moqHandler) fetchHistory(ctx context.Context, session *moqtransport.Session) {
 	now := time.Now().Unix()
 	start := moqtransport.Location{Group: uint64(now - int64(h.fetch))}
@@ -319,18 +334,48 @@ func (h *moqHandler) fetchHistory(ctx context.Context, session *moqtransport.Ses
 		log.Printf("fetch failed: %v", err)
 		return
 	}
+	h.drainFetch(ctx, fetch, "fetched")
+}
+
+// joiningFetch retrieves the seconds behind an established subscription, the
+// way a player fills a buffer before playing from the live edge.
+//
+// The range is not this endpoint's to compute. It names the subscription and
+// how far back to go, and the publisher works out the rest from that
+// subscription's Joining Location, so what the fetch returns and what the
+// subscription delivers are contiguous and do not overlap -- no gap at the
+// join point, and no Object delivered twice.
+func (h *moqHandler) joiningFetch(ctx context.Context, session *moqtransport.Session, track *moqtransport.RemoteTrack) {
+	fetch, err := session.FetchRelative(ctx, track, h.join)
+	if err != nil {
+		log.Printf("joining fetch failed: %v", err)
+		return
+	}
+	log.Printf("joining fetch accepted, ends at group %d", fetch.EndLocation().Group)
+	h.drainFetch(ctx, fetch, "joined ")
+}
+
+// drainFetch reads a whole FETCH response. Reaching the end of one is an
+// ending of its own: a FETCH is finite, unlike a subscription.
+func (h *moqHandler) drainFetch(ctx context.Context, fetch *moqtransport.FetchStream, label string) {
 	for {
 		record, err := fetch.ReadObject(ctx)
 		if err != nil {
 			if errors.Is(err, moqtransport.ErrFetchComplete) {
-				log.Printf("fetch complete")
+				log.Printf("%s complete", strings.TrimSpace(label))
 			} else {
-				log.Printf("fetch ended early: %v", err)
+				log.Printf("%s ended early: %v", strings.TrimSpace(label), err)
 			}
 			return
 		}
-		log.Printf("fetched  group %d object %d: %s",
-			record.GroupID, record.ObjectID, record.Payload)
+		if record.EndOfRange != 0 {
+			// A marker rather than an Object: everything up to here is absent
+			// or of unknown status.
+			log.Printf("%s nothing up to group %d object %d",
+				label, record.GroupID, record.ObjectID)
+			continue
+		}
+		log.Printf("%s group %d object %d: %s", label, record.GroupID, record.ObjectID, record.Payload)
 		if h.onObject != nil {
 			h.onObject(&record.Object)
 		}
@@ -345,6 +390,11 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, session *moqtransport
 	}
 	if largest, ok := track.LargestObject(); ok {
 		log.Printf("subscribed, live edge is group %d", largest.Group)
+	}
+	// A joining fetch has to come after the SUBSCRIBE it joins: it names that
+	// subscription, and the publisher resolves the range against it.
+	if h.join > 0 {
+		h.joiningFetch(ctx, session, track)
 	}
 	if h.pause > 0 {
 		go h.pauseAndResume(ctx, track)

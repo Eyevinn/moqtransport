@@ -78,14 +78,20 @@ A nil handler rejects its request type with `NOT_SUPPORTED`, which is a legitima
 
 [`examples/date`](examples/date/README.md) is a working publisher and
 subscriber for a track of timestamps, over both transports. It covers
-announcements, subscriptions, fetches, subscription updates, and a subscriber
-leaving.
+announcements, subscriptions, both kinds of FETCH, subscription updates, and a
+subscriber leaving — and it is tested against itself over a real QUIC stack.
 
 ```shell
 cd examples/date
-go run . -server -publish     # in one shell
-go run . -subscribe -fetch 4  # in another
+go run . -server -publish    # in one shell
+go run . -subscribe -join 4  # in another
 ```
+
+`-join 4` is a joining FETCH: it fills the four seconds behind the live edge
+before playing from it, with the publisher resolving the range so that what the
+fetch returns and what the subscription delivers meet exactly. That is the
+pattern a player uses to fill a buffer, and the example's README shows the
+group numbers proving there is no gap and no duplicate at the join point.
 
 ## Project structure
 
