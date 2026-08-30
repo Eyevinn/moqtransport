@@ -1,3 +1,7 @@
 *.pem
 .idea/
 .claude/
+
+# Local Go workspace, see the comment inside it.
+go.work
+go.work.sum
