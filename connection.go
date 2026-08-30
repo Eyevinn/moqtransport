@@ -131,9 +131,11 @@ type Connection interface {
 	// Perspective returns the perspective of the connection.
 	Perspective() Perspective
 
-	// NegotiatedALPN returns the ALPN protocol string negotiated during
-	// the TLS handshake. For raw QUIC this is the TLS ALPN (e.g. "moq-00"
-	// or "moqt-16"). For WebTransport this returns "" since version
-	// negotiation uses a different mechanism.
+	// NegotiatedALPN returns the protocol identifier the transport settled on:
+	// the TLS ALPN for native QUIC, and the subprotocol for WebTransport.
+	//
+	// From draft-17 onwards this is the whole of MOQT version negotiation.
+	// SETUP carries no version field, so an endpoint that cannot map this
+	// string to a version it implements has no in-band way to recover.
 	NegotiatedALPN() string
 }
