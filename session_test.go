@@ -27,8 +27,8 @@ func runSessions(t *testing.T, client, server *Session) {
 	require.NoError(t, <-errs)
 
 	t.Cleanup(func() {
-		client.Close(SessionErrorNoError, "test over")
-		server.Close(SessionErrorNoError, "test over")
+		_ = client.Close(SessionErrorNoError, "test over")
+		_ = server.Close(SessionErrorNoError, "test over")
 	})
 }
 
@@ -58,7 +58,7 @@ func TestSessionSubscribeEndToEnd(t *testing.T) {
 	server := &Session{
 		SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 			if r.Track() != "video0" {
-				r.Reject(RequestErrorDoesNotExist, "no such track")
+				_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 				return
 			}
 			sub, err := r.Accept(
@@ -181,7 +181,7 @@ func TestSessionInheritsPublisherPriority(t *testing.T) {
 func TestSessionSubscribeRejected(t *testing.T) {
 	server := &Session{
 		SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
-			r.Reject(RequestErrorDoesNotExist, "no such track")
+			_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 		}),
 	}
 	client := &Session{}

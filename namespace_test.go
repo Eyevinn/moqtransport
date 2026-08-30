@@ -45,7 +45,7 @@ func TestPublishNamespaceEndToEnd(t *testing.T) {
 func TestPublishNamespaceRejected(t *testing.T) {
 	server := &Session{
 		PublishNamespaceHandler: PublishNamespaceHandlerFunc(func(r *PublishNamespaceRequest) {
-			r.Reject(RequestErrorUninterested, "not interested")
+			_ = r.Reject(RequestErrorUninterested, "not interested")
 		}),
 	}
 	client := &Session{}
@@ -159,7 +159,7 @@ func TestNamespaceAnnouncerRejectsForeignNamespace(t *testing.T) {
 func TestSubscribeNamespacePrefixOverlap(t *testing.T) {
 	server := &Session{
 		SubscribeNamespaceHandler: SubscribeNamespaceHandlerFunc(func(r *SubscribeNamespaceRequest) {
-			r.Accept()
+			_, _ = r.Accept()
 		}),
 	}
 	client := &Session{}

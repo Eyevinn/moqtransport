@@ -17,10 +17,10 @@ func TestTrackStatusEndToEnd(t *testing.T) {
 	server := &Session{
 		TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
 			if r.Track() != "video0" {
-				r.Reject(RequestErrorDoesNotExist, "no such track")
+				_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 				return
 			}
-			r.Accept(TrackStatus{
+			_ = r.Accept(TrackStatus{
 				Parameters: Parameters{
 					wire2.LocationParameter(wire2.ParamLargestObject, Location{Group: 12, Object: 4}),
 				},
@@ -50,7 +50,7 @@ func TestTrackStatusEndToEnd(t *testing.T) {
 func TestTrackStatusRejected(t *testing.T) {
 	server := &Session{
 		TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
-			r.Reject(RequestErrorDoesNotExist, "no such track")
+			_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 		}),
 	}
 	client := &Session{}
@@ -84,7 +84,7 @@ func TestTrackStatusAnsweredOnce(t *testing.T) {
 	second := make(chan error, 1)
 	server := &Session{
 		TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
-			r.Accept(TrackStatus{})
+			_ = r.Accept(TrackStatus{})
 			second <- r.Accept(TrackStatus{})
 		}),
 	}

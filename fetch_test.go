@@ -29,7 +29,7 @@ func TestFetchEndToEnd(t *testing.T) {
 	server := &Session{
 		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
 			if r.Track() != "video0" {
-				r.Reject(RequestErrorDoesNotExist, "no such track")
+				_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 				return
 			}
 			start, end := r.Range()
@@ -42,7 +42,7 @@ func TestFetchEndToEnd(t *testing.T) {
 			}
 			for group := uint64(2); group < 4; group++ {
 				for object := range uint64(2) {
-					response.WriteObject(Object{
+					_ = response.WriteObject(Object{
 						GroupID:  group,
 						ObjectID: object,
 						Priority: 128,
@@ -50,7 +50,7 @@ func TestFetchEndToEnd(t *testing.T) {
 					})
 				}
 			}
-			response.Close()
+			_ = response.Close()
 		}),
 	}
 	client := &Session{}
@@ -85,7 +85,7 @@ func TestFetchEmptyRange(t *testing.T) {
 			if err != nil {
 				return
 			}
-			response.Close()
+			_ = response.Close()
 		}),
 	}
 	client := &Session{}
@@ -108,11 +108,11 @@ func TestFetchEndOfRangeMarkers(t *testing.T) {
 			if err != nil {
 				return
 			}
-			response.WriteObject(Object{GroupID: 1, ObjectID: 0, Priority: 1, Payload: []byte("a")})
-			response.WriteEndOfRange(EndOfRangeNonExistent, Location{Group: 1, Object: 5})
-			response.WriteEndOfRange(EndOfRangeUnknown, Location{Group: 1, Object: 9})
-			response.WriteObject(Object{GroupID: 1, ObjectID: 10, Priority: 1, Payload: []byte("b")})
-			response.Close()
+			_ = response.WriteObject(Object{GroupID: 1, ObjectID: 0, Priority: 1, Payload: []byte("a")})
+			_ = response.WriteEndOfRange(EndOfRangeNonExistent, Location{Group: 1, Object: 5})
+			_ = response.WriteEndOfRange(EndOfRangeUnknown, Location{Group: 1, Object: 9})
+			_ = response.WriteObject(Object{GroupID: 1, ObjectID: 10, Priority: 1, Payload: []byte("b")})
+			_ = response.Close()
 		}),
 	}
 	client := &Session{}
@@ -138,7 +138,7 @@ func TestFetchEndOfRangeMarkers(t *testing.T) {
 func TestFetchRejected(t *testing.T) {
 	server := &Session{
 		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
-			r.Reject(RequestErrorInvalidRange, "out of range")
+			_ = r.Reject(RequestErrorInvalidRange, "out of range")
 		}),
 	}
 	client := &Session{}
@@ -175,7 +175,7 @@ func TestJoiningFetchResolvesTheRange(t *testing.T) {
 		SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 			// The Largest Location reported here is the Joining Location the
 			// fetch will end at.
-			r.Accept(WithLargestObject(Location{Group: 10, Object: 3}))
+			_, _ = r.Accept(WithLargestObject(Location{Group: 10, Object: 3}))
 		}),
 		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
 			start, end := r.Range()
@@ -186,7 +186,7 @@ func TestJoiningFetchResolvesTheRange(t *testing.T) {
 			if err != nil {
 				return
 			}
-			response.Close()
+			_ = response.Close()
 		}),
 	}
 	client := &Session{}
@@ -222,14 +222,14 @@ func TestJoiningFetchErrors(t *testing.T) {
 		SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 			if r.Track() == "empty" {
 				// No Largest Object: nothing has been published on the track.
-				r.Accept()
+				_, _ = r.Accept()
 				return
 			}
-			r.Accept(WithLargestObject(Location{Group: 4, Object: 1}))
+			_, _ = r.Accept(WithLargestObject(Location{Group: 4, Object: 1}))
 		}),
 		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
 			fetched <- struct{}{}
-			r.Reject(RequestErrorInternal, "should not be reached")
+			_ = r.Reject(RequestErrorInternal, "should not be reached")
 		}),
 	}
 	client := &Session{}
