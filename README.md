@@ -27,9 +27,7 @@ type are implemented and tested end to end over an in-process transport:
 
 Not yet done: incoming PUBLISH and SUBSCRIBE_TRACKS, which are answered with
 `NOT_SUPPORTED`; GOAWAY-driven session migration, which is read and ignored;
-the examples and the integration tests against a real QUIC stack, which were
-deleted with the old session; and the downstream move of `moqlivemock`. The
-branch merges to `main` when the integration suite passes end to end.
+and the downstream move of `moqlivemock`.
 
 ## Design
 
@@ -76,8 +74,22 @@ session.SubscribeHandler = moqtransport.SubscribeHandlerFunc(func(r *moqtranspor
 
 A nil handler rejects its request type with `NOT_SUPPORTED`, which is a legitimate answer and better than leaving the peer waiting.
 
+## Usage
+
+[`examples/date`](examples/date/README.md) is a working publisher and
+subscriber for a track of timestamps, over both transports. It covers
+announcements, subscriptions, fetches, subscription updates, and a subscriber
+leaving.
+
+```shell
+cd examples/date
+go run . -server -publish     # in one shell
+go run . -subscribe -fetch 4  # in another
+```
+
 ## Project structure
 
+- `examples/date/`: a publisher and subscriber for a clock track
 - `quicmoq/`: adapter for native QUIC connections
 - `webtransportmoq/`: adapter for WebTransport sessions
 - `internal/wire2/`: the draft-18 wire format — message codecs, the three Key-Value-Pair registries, and the hand-written data-plane bitfields
