@@ -41,6 +41,14 @@ type publisherSession interface {
 	// sendDatagram sends one datagram, which may be dropped if it exceeds the
 	// session's maximum datagram size.
 	sendDatagram([]byte) error
+
+	// registerSubscription indexes an accepted subscription by the Request ID
+	// the peer gave it, which is how a Joining FETCH names the subscription it
+	// joins (Section 10.12.2).
+	registerSubscription(requestID uint64, sub *Subscription)
+
+	// unregisterSubscription drops that index entry when the subscription ends.
+	unregisterSubscription(requestID uint64)
 }
 
 // SubscribeRequest is an incoming SUBSCRIBE, and the bidirectional stream that
@@ -159,11 +167,13 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		trackAlias:    ok.TrackAlias,
 		namespace:     r.namespace,
 		track:         r.track,
+		requestID:     r.requestID,
 		priority:      priority,
 		forward:       forward,
 		filter:        filter,
 		hasFilter:     hasFilter,
 	}
+	sub.joiningLocation, sub.hasJoiningLocation = ok.Parameters.LargestObject()
 
 	r.mu.Lock()
 	if r.answered {
@@ -174,6 +184,7 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	r.subscription = sub
 	r.mu.Unlock()
 
+	r.session.registerSubscription(r.requestID, sub)
 	if err := r.write(ok); err != nil {
 		return nil, err
 	}
@@ -227,6 +238,7 @@ func (r *SubscribeRequest) streamEnded() {
 	sub := r.subscription
 	r.mu.Unlock()
 	if sub != nil {
+		r.session.unregisterSubscription(r.requestID)
 		sub.streamEnded()
 	}
 }
@@ -276,6 +288,13 @@ type Subscription struct {
 	trackAlias uint64
 	namespace  []string
 	track      string
+	requestID  uint64
+
+	// joiningLocation is the Largest Location reported in SUBSCRIBE_OK. A
+	// Joining FETCH ends there, so that what it retrieves and what the
+	// subscription delivers are contiguous and do not overlap (Section 5.1).
+	joiningLocation    Location
+	hasJoiningLocation bool
 
 	mu          sync.Mutex
 	priority    uint8
@@ -327,6 +346,16 @@ func (s *Subscription) Namespace() []string { return s.namespace }
 
 // Track is the Track Name this subscription is for.
 func (s *Subscription) Track() string { return s.track }
+
+// RequestID is the ID the subscriber gave this subscription. A Joining FETCH
+// names the subscription it joins by it.
+func (s *Subscription) RequestID() uint64 { return s.requestID }
+
+// JoiningLocation is the Largest Location reported in SUBSCRIBE_OK, and
+// whether one was reported. A Joining FETCH ends there.
+func (s *Subscription) JoiningLocation() (Location, bool) {
+	return s.joiningLocation, s.hasJoiningLocation
+}
 
 // SubscriberPriority is the priority currently in effect.
 func (s *Subscription) SubscriberPriority() uint8 {
