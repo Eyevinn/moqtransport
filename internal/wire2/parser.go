@@ -16,10 +16,17 @@ type ControlMessageParser struct {
 
 // NewControlMessageParser returns a parser reading messages of scope from r.
 func NewControlMessageParser(r io.Reader, scope StreamScope) *ControlMessageParser {
-	return &ControlMessageParser{
-		reader: bufio.NewReader(r),
-		scope:  scope,
-	}
+	return NewControlMessageParserFromReader(bufio.NewReader(r), scope)
+}
+
+// NewControlMessageParserFromReader returns a parser reading from an existing
+// buffered reader.
+//
+// A caller that has already sniffed the stream type needs this: wrapping the
+// stream a second time would leave the bytes the first reader buffered
+// stranded in it.
+func NewControlMessageParserFromReader(r *bufio.Reader, scope StreamScope) *ControlMessageParser {
+	return &ControlMessageParser{reader: r, scope: scope}
 }
 
 // Reader returns the buffered reader the parser reads from, so a caller that

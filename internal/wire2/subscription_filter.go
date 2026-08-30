@@ -223,6 +223,40 @@ func (pp Parameters) LargestObject() (Location, bool) {
 	return p.Location, true
 }
 
+// DefaultPublisherPriority returns the DEFAULT_PUBLISHER_PRIORITY Track
+// Property, or 128 if it is absent (Section 12.4).
+//
+// This is the priority a Subgroup or Datagram inherits when its header sets the
+// DEFAULT_PRIORITY bit and leaves the field off the wire.
+func (pp KVPList) DefaultPublisherPriority() (uint8, error) {
+	p, ok := pp.Get(PropertyDefaultPublisherPriority)
+	if !ok {
+		return DefaultPublisherPriority, nil
+	}
+	if p.ValueVarInt > 255 {
+		return 0, errPriorityOutOfRange
+	}
+	return uint8(p.ValueVarInt), nil
+}
+
+// DefaultPublisherGroupOrder returns the DEFAULT_PUBLISHER_GROUP_ORDER Track
+// Property, or Ascending if it is absent (Section 12.5).
+func (pp KVPList) DefaultPublisherGroupOrder() (GroupOrder, error) {
+	p, ok := pp.Get(PropertyDefaultPublisherGroupOrder)
+	if !ok {
+		return GroupOrderAscending, nil
+	}
+	order := GroupOrder(p.ValueVarInt)
+	if !order.Valid() {
+		return 0, errInvalidGroupOrder
+	}
+	return order, nil
+}
+
 // DefaultSubscriberPriority is the value a publisher uses when SUBSCRIBER_PRIORITY
 // is omitted (Section 10.2.7).
 const DefaultSubscriberPriority uint8 = 128
+
+// DefaultPublisherPriority is the priority a Subgroup or Datagram inherits when
+// the Track says nothing (Section 12.4).
+const DefaultPublisherPriority uint8 = 128

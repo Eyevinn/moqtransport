@@ -122,6 +122,9 @@ var (
 	// nor Descending.
 	errInvalidGroupOrder = errors.New("invalid group order")
 
+	// errPriorityOutOfRange means a priority property held a value above 255.
+	errPriorityOutOfRange = errors.New("priority above 255")
+
 	// errGroupIDNotAscending and errGroupIDNotDescending mean a FETCH response
 	// was written with Groups out of the order it declared. The Group ID Delta
 	// only moves one way, so the encoding cannot express it.

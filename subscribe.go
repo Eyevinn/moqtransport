@@ -157,6 +157,8 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		requestStream: r.requestStream,
 		session:       r.session,
 		trackAlias:    ok.TrackAlias,
+		namespace:     r.namespace,
+		track:         r.track,
 		priority:      priority,
 		forward:       forward,
 		filter:        filter,
@@ -272,6 +274,8 @@ type Subscription struct {
 
 	session    publisherSession
 	trackAlias uint64
+	namespace  []string
+	track      string
 
 	mu          sync.Mutex
 	priority    uint8
@@ -317,6 +321,12 @@ type SubscriptionUpdate struct {
 
 // TrackAlias returns the alias Objects on this subscription are sent under.
 func (s *Subscription) TrackAlias() uint64 { return s.trackAlias }
+
+// Namespace is the Track Namespace this subscription is for.
+func (s *Subscription) Namespace() []string { return s.namespace }
+
+// Track is the Track Name this subscription is for.
+func (s *Subscription) Track() string { return s.track }
 
 // SubscriberPriority is the priority currently in effect.
 func (s *Subscription) SubscriberPriority() uint8 {
