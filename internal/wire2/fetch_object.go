@@ -262,14 +262,25 @@ func (f *FetchReader) Next() (*FetchObject, error) {
 	return obj, nil
 }
 
-// readEndOfRange reads the Location of an End of Range indicator.
+// readEndOfRange reads the Location of an End of Range indicator: its
+// Serialization Flags are followed by a Group ID and an Object ID, and by
+// nothing else.
 //
-// Its Group ID and Object ID are absolute, not deltas. Section 11.4.4.2 names
-// them "the Group ID and Object ID fields", where Section 11.4.4.1 is careful
-// to say "Group ID Delta" everywhere -- and the delta reading would make the
-// common case, an indicator covering Objects in the Group it follows,
-// inexpressible: an ascending Group ID Delta always advances at least one
-// Group.
+// The two IDs are absolute, not deltas. Section 11.4.4.2 names them "the Group
+// ID and Object ID fields", where Section 11.4.4.1 is careful to say "Group ID
+// Delta" everywhere -- and the delta reading would make the common case, an
+// indicator covering Objects in the Group it follows, inexpressible: an
+// ascending Group ID Delta always advances at least one Group. Its wording
+// predates delta encoding, which arrived in draft-18 without touching it, so
+// it still means what it did in draft-17 when those fields were absolute.
+//
+// Object Payload Length is not written. Section 11.4.4.2 does not name it
+// among the fields it removes and Figure 27 has it unbracketed, which reads
+// like it stays -- but moxygen, quiche, moqtail, moq-go and aiomoqt all resume
+// at the next Object's Serialization Flags instead, so a zero length here
+// desynchronises every one of them. moxygen's
+// MoQFramerV18Test.FetchEndOfRangeSetsPriorGroupAndObject puts an ordinary
+// Object immediately after an indicator and is the clearest statement of it.
 func (f *FetchReader) readEndOfRange(kind EndOfRange) (*FetchObject, error) {
 	switch kind {
 	case EndOfRangeNonExistent, EndOfRangeUnknown:
@@ -284,17 +295,6 @@ func (f *FetchReader) readEndOfRange(kind EndOfRange) (*FetchObject, error) {
 	}
 	if obj.ObjectID, err = vi64.Read(f.r); err != nil {
 		return nil, unexpectedEOF(err)
-	}
-
-	// An indicator carries no payload, but Object Payload Length is not among
-	// the fields Section 11.4.4.2 removes and Figure 27 has it unbracketed. So
-	// it is written, and must be zero.
-	payloadLen, err := vi64.Read(f.r)
-	if err != nil {
-		return nil, unexpectedEOF(err)
-	}
-	if payloadLen != 0 {
-		return nil, errEndOfRangeWithPayload
 	}
 
 	// Only the Location advances: Subgroup ID and Priority still refer to the
@@ -409,6 +409,9 @@ func (f *FetchWriter) AppendObject(buf []byte, obj *FetchObject) ([]byte, error)
 	return buf, nil
 }
 
+// appendEndOfRange writes an End of Range indicator: its Serialization Flags,
+// the absolute Group ID and Object ID it names, and nothing else. See
+// readEndOfRange for why no Object Payload Length follows.
 func (f *FetchWriter) appendEndOfRange(buf []byte, obj *FetchObject) ([]byte, error) {
 	switch obj.EndOfRange {
 	case EndOfRangeNonExistent, EndOfRangeUnknown:
@@ -422,7 +425,6 @@ func (f *FetchWriter) appendEndOfRange(buf []byte, obj *FetchObject) ([]byte, er
 	buf = vi64.Append(buf, uint64(obj.EndOfRange))
 	buf = vi64.Append(buf, obj.GroupID)
 	buf = vi64.Append(buf, obj.ObjectID)
-	buf = vi64.Append(buf, 0)
 
 	f.remember(obj.GroupID, obj.ObjectID)
 	return buf, nil
