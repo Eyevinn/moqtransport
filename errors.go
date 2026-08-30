@@ -1,164 +1,135 @@
 package moqtransport
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
-// ErrorCode is a generic error codes
-type ErrorCode uint64
-
-const (
-	ErrorCodeNoError                  ErrorCode = 0x00
-	ErrorCodeInternal                 ErrorCode = 0x01
-	ErrorCodeUnauthorized             ErrorCode = 0x02
-	ErrorCodeProtocolViolation        ErrorCode = 0x03
-	ErrorCodeInvalidRequestID         ErrorCode = 0x04
-	ErrorCodeDuplicateTrackAlias      ErrorCode = 0x05
-	ErrorCodeKeyValueFormattingError  ErrorCode = 0x06
-	ErrorCodeTooManyRequests          ErrorCode = 0x07
-	ErrorCodeInvalidPath              ErrorCode = 0x08
-	ErrorCodeMalformedPath            ErrorCode = 0x09
-	ErrorCodeGoAwayTimeout            ErrorCode = 0x10
-	ErrorCodeControlMessageTimeout    ErrorCode = 0x11
-	ErrorCodeDataStreamTimeout        ErrorCode = 0x12
-	ErrorCodeAuthTokenCacheOverflow   ErrorCode = 0x13
-	ErrorCodeDuplicateAuthTokenAlias  ErrorCode = 0x14
-	ErrorCodeVersionNegotiationFailed ErrorCode = 0x15
-	ErrorCodeMalformedAuthToken       ErrorCode = 0x16
-	ErrorCodeUnknownAuthTokenAlias    ErrorCode = 0x17
-	ErrorCodeExpiredAuthToken         ErrorCode = 0x18
-)
-
-// ErrorCodeSubscribe is a Subscribe error code
-type ErrorCodeSubscribe uint64
+// SessionErrorCode is the code an endpoint closes the whole session with
+// (draft-ietf-moq-transport-18, Section 15.10.1).
+//
+// It is the most serious of the four registries: where a REQUEST_ERROR ends
+// one request and a stream reset ends one stream, these end the connection.
+// Everything the draft calls a PROTOCOL_VIOLATION arrives here.
+type SessionErrorCode uint64
 
 const (
-	ErrorCodeSubscribeInternal           ErrorCodeSubscribe = 0x00
-	ErrorCodeSubscribeUnauthorized       ErrorCodeSubscribe = 0x01
-	ErrorCodeSubscribeTimeout            ErrorCodeSubscribe = 0x02
-	ErrorCodeSubscribeNotSupported       ErrorCodeSubscribe = 0x03
-	ErrorCodeSubscribeTrackDoesNotExist  ErrorCodeSubscribe = 0x04
-	ErrorCodeSubscribeInvalidRange       ErrorCodeSubscribe = 0x05
-	ErrorCodeSubscribeMalformedAuthToken ErrorCodeSubscribe = 0x10
-	ErrorCodeSubscribeExpiredAuthToken   ErrorCodeSubscribe = 0x12
+	// SessionErrorNoError closes the session without an error.
+	SessionErrorNoError SessionErrorCode = 0x0
+	// SessionErrorInternal is an implementation specific error.
+	SessionErrorInternal SessionErrorCode = 0x1
+	// SessionErrorUnauthorized means the peer is not authorized.
+	SessionErrorUnauthorized SessionErrorCode = 0x2
+	// SessionErrorProtocolViolation means the peer sent something the draft
+	// does not allow. Most parse failures end here: draft-18 leaves very
+	// little that an endpoint is permitted to skip.
+	SessionErrorProtocolViolation SessionErrorCode = 0x3
+	// SessionErrorInvalidRequestID means a Request ID had the wrong parity for
+	// its sender, or repeated one already used.
+	SessionErrorInvalidRequestID SessionErrorCode = 0x4
+	// SessionErrorDuplicateTrackAlias means one Track Alias was used for two
+	// different tracks at once.
+	SessionErrorDuplicateTrackAlias SessionErrorCode = 0x5
+	// SessionErrorKeyValueFormattingError means a Key-Value-Pair could not be
+	// decoded.
+	SessionErrorKeyValueFormattingError SessionErrorCode = 0x6
+	// SessionErrorInvalidPath means the PATH Setup Option was used where it is
+	// not allowed, such as over WebTransport or from a server.
+	SessionErrorInvalidPath SessionErrorCode = 0x8
+	// SessionErrorMalformedPath means the PATH Setup Option could not be
+	// parsed.
+	SessionErrorMalformedPath SessionErrorCode = 0x9
+	// SessionErrorGoAwayTimeout means the peer did not close after GOAWAY.
+	SessionErrorGoAwayTimeout SessionErrorCode = 0x10
+	// SessionErrorControlMessageTimeout means a control message took too long.
+	SessionErrorControlMessageTimeout SessionErrorCode = 0x11
+	// SessionErrorDataStreamTimeout means a data stream took too long.
+	SessionErrorDataStreamTimeout SessionErrorCode = 0x12
+	// SessionErrorAuthTokenCacheOverflow means the peer exceeded the auth
+	// token cache size it was given.
+	SessionErrorAuthTokenCacheOverflow SessionErrorCode = 0x13
+	// SessionErrorDuplicateAuthTokenAlias means an auth token alias was reused
+	// while still registered.
+	SessionErrorDuplicateAuthTokenAlias SessionErrorCode = 0x14
+	// SessionErrorVersionNegotiationFailed means no common version was found.
+	// From draft-17 that is settled by ALPN before any MOQT byte is written,
+	// so reaching this means the transport handed us a version we do not
+	// implement.
+	SessionErrorVersionNegotiationFailed SessionErrorCode = 0x15
+	// SessionErrorMalformedAuthToken means an auth token could not be parsed.
+	SessionErrorMalformedAuthToken SessionErrorCode = 0x16
+	// SessionErrorUnknownAuthTokenAlias means a token alias was used before it
+	// was registered.
+	SessionErrorUnknownAuthTokenAlias SessionErrorCode = 0x17
+	// SessionErrorExpiredAuthToken means an auth token had expired.
+	SessionErrorExpiredAuthToken SessionErrorCode = 0x18
+	// SessionErrorInvalidAuthority means the AUTHORITY Setup Option was used
+	// where it is not allowed.
+	SessionErrorInvalidAuthority SessionErrorCode = 0x19
+	// SessionErrorMalformedAuthority means the AUTHORITY Setup Option could
+	// not be parsed.
+	SessionErrorMalformedAuthority SessionErrorCode = 0x1A
 )
 
-// ErrorCodeSubscribeDone is a subscribe done error code
-type ErrorCodeSubscribeDone uint64
-
-const (
-	ErrorCodeSubscribeDoneInternal          ErrorCodeSubscribeDone = 0x00
-	ErrorCodeSubscribeDoneUnauthorized      ErrorCodeSubscribeDone = 0x01
-	ErrorCodeSubscribeDoneTrackEnded        ErrorCodeSubscribeDone = 0x02
-	ErrorCodeSubscribeDoneSubscriptionEnded ErrorCodeSubscribeDone = 0x03
-	ErrorCodeSubscribeDoneGoingAway         ErrorCodeSubscribeDone = 0x04
-	ErrorCodeSubscribeDoneExpired           ErrorCodeSubscribeDone = 0x05
-	ErrorCodeSubscribeDoneTooFarBehind      ErrorCodeSubscribeDone = 0x06
-	ErrorCodeSubscribeDoneMalformedTrack    ErrorCodeSubscribeDone = 0x07
-)
-
-// ErrorCodePublish is a publish error code
-type ErrorCodePublish uint64
-
-const (
-	ErrorCodePublishInternalError ErrorCodePublish = 0x00
-	ErrorCodePublishUnauthorized  ErrorCodePublish = 0x01
-	ErrorCodePublishTimeout       ErrorCodePublish = 0x02
-	ErrorCodePublishNotSupported  ErrorCodePublish = 0x03
-	ErrorCodePublishUninterested  ErrorCodePublish = 0x04
-)
-
-// ErrorCodeFetch is a fetch error code
-type ErrorCodeFetch uint64
-
-const (
-	ErrorCodeFetchInternal                  ErrorCodeFetch = 0x00
-	ErrorCodeFetchUnauthorized              ErrorCodeFetch = 0x01
-	ErrorCodeFetchTimeout                   ErrorCodeFetch = 0x02
-	ErrorCodeFetchNotSupported              ErrorCodeFetch = 0x03
-	ErrorCodeFetchTrackDoesNotExist         ErrorCodeFetch = 0x04
-	ErrorCodeFetchInvalidRange              ErrorCodeFetch = 0x05
-	ErrorCodeFetchNoObjects                 ErrorCodeFetch = 0x06
-	ErrorCodeFetchInvalidJoiningSubscribeID ErrorCodeFetch = 0x07
-	ErrorCodeFetchUnknownStatusInRange      ErrorCodeFetch = 0x08
-	ErrorCodeFetchMalformedTrack            ErrorCodeFetch = 0x09
-	ErrorCodeFetchMalformedAuthToken        ErrorCodeFetch = 0x10
-	ErrorCodeFetchExpiredAuthToken          ErrorCodeFetch = 0x12
-)
-
-// ErrorCodeAnnounce is an announcement error code
-type ErrorCodeAnnounce uint64
-
-const (
-	ErrorCodeAnnounceInternal             ErrorCodeAnnounce = 0x00
-	ErrorCodeAnnounceUnauthorized         ErrorCodeAnnounce = 0x01
-	ErrorCodeAnnounceTimeout              ErrorCodeAnnounce = 0x02
-	ErrorCodeAnnounceNotSupported         ErrorCodeAnnounce = 0x03
-	ErrorCodeAnnounceUninterested         ErrorCodeAnnounce = 0x04
-	ErrorCodeAnnounceMalformedAuthToken   ErrorCodeAnnounce = 0x10
-	ErrorCodeAnnouncementExpiredAuthToken ErrorCodeAnnounce = 0x12
-)
-
-// ErrorCodeSubscribeAnnounces is a subscribe announces error code
-type ErrorCodeSubscribeAnnounces uint64
-
-const (
-	ErrorCodeSubscribeAnnouncesInternal               ErrorCodeSubscribeAnnounces = 0x00
-	ErrorCodeSubscribeAnnouncesUnauthorized           ErrorCodeSubscribeAnnounces = 0x01
-	ErrorCodeSubscribeAnnouncesTimeout                ErrorCodeSubscribeAnnounces = 0x02
-	ErrorCodeSubscribeAnnouncesNotSupported           ErrorCodeSubscribeAnnounces = 0x03
-	ErrorCodeSubscribeAnnouncesNamespacePrefixUnknown ErrorCodeSubscribeAnnounces = 0x04
-	ErrorCodeSubscribeAnnouncesNamespacePrefixOverlap ErrorCodeSubscribeAnnounces = 0x05
-	ErrorCodeSubscribeAnnouncesMalformedAuthToken     ErrorCodeSubscribeAnnounces = 0x10
-	ErrorCodeSubscribeAnnouncesExpiredAuthToken       ErrorCodeSubscribeAnnounces = 0x12
-)
-
-// ProtocolError is a MoQ protocol error
-type ProtocolError struct {
-	code    ErrorCode
-	message string
+func (c SessionErrorCode) String() string {
+	switch c {
+	case SessionErrorNoError:
+		return "NO_ERROR"
+	case SessionErrorInternal:
+		return "INTERNAL_ERROR"
+	case SessionErrorUnauthorized:
+		return "UNAUTHORIZED"
+	case SessionErrorProtocolViolation:
+		return "PROTOCOL_VIOLATION"
+	case SessionErrorInvalidRequestID:
+		return "INVALID_REQUEST_ID"
+	case SessionErrorDuplicateTrackAlias:
+		return "DUPLICATE_TRACK_ALIAS"
+	case SessionErrorKeyValueFormattingError:
+		return "KEY_VALUE_FORMATTING_ERROR"
+	case SessionErrorInvalidPath:
+		return "INVALID_PATH"
+	case SessionErrorMalformedPath:
+		return "MALFORMED_PATH"
+	case SessionErrorGoAwayTimeout:
+		return "GOAWAY_TIMEOUT"
+	case SessionErrorControlMessageTimeout:
+		return "CONTROL_MESSAGE_TIMEOUT"
+	case SessionErrorDataStreamTimeout:
+		return "DATA_STREAM_TIMEOUT"
+	case SessionErrorAuthTokenCacheOverflow:
+		return "AUTH_TOKEN_CACHE_OVERFLOW"
+	case SessionErrorDuplicateAuthTokenAlias:
+		return "DUPLICATE_AUTH_TOKEN_ALIAS"
+	case SessionErrorVersionNegotiationFailed:
+		return "VERSION_NEGOTIATION_FAILED"
+	case SessionErrorMalformedAuthToken:
+		return "MALFORMED_AUTH_TOKEN"
+	case SessionErrorUnknownAuthTokenAlias:
+		return "UNKNOWN_AUTH_TOKEN_ALIAS"
+	case SessionErrorExpiredAuthToken:
+		return "EXPIRED_AUTH_TOKEN"
+	case SessionErrorInvalidAuthority:
+		return "INVALID_AUTHORITY"
+	case SessionErrorMalformedAuthority:
+		return "MALFORMED_AUTHORITY"
+	}
+	return unregisteredCode("session error", uint64(c))
 }
 
-func (e *ProtocolError) String() string {
-	return e.Error()
+// ProtocolError is a violation that closes the session, carrying the code to
+// close it with.
+type ProtocolError struct {
+	code    SessionErrorCode
+	message string
 }
 
 func (e ProtocolError) Error() string {
 	return fmt.Sprintf("%v: %v", e.code, e.message)
 }
 
-func (e ProtocolError) Code() uint64 {
-	return uint64(e.code)
+func (e ProtocolError) String() string {
+	return e.Error()
 }
 
-var (
-	errDuplicateRequestID = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
-		message: "duplicate request ID",
-	}
-	errMaxRequestIDDecreased = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
-		message: "max request ID decreased",
-	}
-	errUnknownAnnouncement = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
-		message: "unknown announcement",
-	}
-	errInvalidNamespaceLength = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
-		message: "invalid namespace length",
-	}
-	// errJoiningFetchInvalidFilter is returned (closing the session) when a
-	// Joining FETCH references a subscription whose Filter Type is not Largest
-	// Object (draft-16 §9.16.2).
-	errJoiningFetchInvalidFilter = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
-		message: "joining fetch requires a subscription with filter type Largest Object",
-	}
-)
-
-// errInvalidJoiningFetchRange is an internal sentinel used by
-// resolveJoiningFetch to signal that the requested range is invalid; it is
-// reported to the peer as a FETCH_ERROR with INVALID_RANGE.
-var errInvalidJoiningFetchRange = errors.New("invalid joining fetch range")
+// Code returns the session error code to close with.
+func (e ProtocolError) Code() SessionErrorCode {
+	return e.code
+}
