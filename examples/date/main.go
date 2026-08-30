@@ -51,6 +51,7 @@ type options struct {
 	publish      bool
 	subscribe    bool
 	fetch        uint
+	join         uint
 	pause        time.Duration
 	webtransport bool
 	namespace    string
@@ -71,7 +72,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.server, "server", false, "run as server")
 	fs.BoolVar(&opts.publish, "publish", false, "publish the date track")
 	fs.BoolVar(&opts.subscribe, "subscribe", false, "subscribe to the date track")
-	fs.UintVar(&opts.fetch, "fetch", 0, "fetch this many seconds of history before subscribing")
+	fs.UintVar(&opts.fetch, "fetch", 0, "standalone FETCH: this many seconds of history, before subscribing")
+	fs.UintVar(&opts.join, "join", 0, "joining FETCH: this many seconds behind the subscription, after subscribing")
 	fs.DurationVar(&opts.pause, "pause", 0, "after this long, pause delivery for the same again (subscriber only)")
 	fs.BoolVar(&opts.webtransport, "webtransport", false, "use WebTransport instead of native QUIC (client only)")
 	fs.StringVar(&opts.namespace, "namespace", "clock", "namespace to publish or subscribe to")
@@ -103,6 +105,9 @@ func run(args []string) error {
 	if opts.fetch > 0 && !opts.subscribe {
 		return errors.New("-fetch needs -subscribe")
 	}
+	if opts.join > 0 && !opts.subscribe {
+		return errors.New("-join needs -subscribe")
+	}
 	if opts.pause > 0 && !opts.subscribe {
 		return errors.New("-pause needs -subscribe")
 	}
@@ -119,6 +124,7 @@ func run(args []string) error {
 		publish:   opts.publish,
 		subscribe: opts.subscribe,
 		fetch:     uint64(opts.fetch),
+		join:      uint64(opts.join),
 		pause:     opts.pause,
 	}
 	if opts.server {
