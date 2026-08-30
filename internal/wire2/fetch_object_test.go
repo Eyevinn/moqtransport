@@ -136,7 +136,7 @@ func TestFetchObjectEndOfRange(t *testing.T) {
 func TestFetchObjectInvalidSerializationFlags(t *testing.T) {
 	for _, flags := range []uint64{0x80, 0x8B, 0x8D, 0x100, 0x10D, 0x4000} {
 		buf := vi64.Append(nil, flags)
-		buf = append(buf, 0x01, 0x02, 0x00)
+		buf = append(buf, 0x01, 0x02)
 		_, err := NewFetchReader(reader(buf), GroupOrderAscending).Next()
 		assert.ErrorIs(t, err, errInvalidSerializationFlags, "flags %#x", flags)
 	}
@@ -216,9 +216,10 @@ func TestFetchObjectPriorAcrossEndOfRange(t *testing.T) {
 	// Group 2, subgroup 6, object 0, priority 9.
 	buf := vi64.Append(nil, both|uint64(FetchSubgroupExplicit))
 	buf = append(buf, 0x02, 0x06, 0x00, 0x09, 0x00)
-	// End of Non-Existent Range at {2, 20}.
+	// End of Non-Existent Range at {2, 20}. Its two IDs are the whole
+	// indicator: the next Object's Serialization Flags follow immediately.
 	buf = vi64.Append(buf, uint64(EndOfRangeNonExistent))
-	buf = append(buf, 0x02, 0x14, 0x00)
+	buf = append(buf, 0x02, 0x14)
 	// Then an Object inheriting everything it can.
 	buf = vi64.Append(buf, uint64(FetchSubgroupPrior))
 	buf = append(buf, 0x00)
@@ -243,11 +244,21 @@ func TestFetchObjectEndOfRangeRejectsPayload(t *testing.T) {
 		GroupID: 1, ObjectID: 2, EndOfRange: EndOfRangeUnknown, Payload: []byte("x"),
 	})
 	assert.ErrorIs(t, err, errEndOfRangeWithPayload)
+}
 
-	buf := vi64.Append(nil, uint64(EndOfRangeUnknown))
-	buf = append(buf, 0x01, 0x02, 0x01, byte('x'))
-	_, err = NewFetchReader(reader(buf), GroupOrderAscending).Next()
-	assert.ErrorIs(t, err, errEndOfRangeWithPayload)
+// An End of Range indicator is its Serialization Flags and two IDs, and stops
+// there. No Object Payload Length follows, however Figure 27 reads: moxygen,
+// quiche, moqtail, moq-go and aiomoqt all resume parsing at the next Object's
+// flags, so a trailing zero here desynchronises every one of them.
+func TestFetchObjectEndOfRangeWireShape(t *testing.T) {
+	buf, err := NewFetchWriter(GroupOrderAscending).AppendObject(nil, &FetchObject{
+		GroupID: 5, ObjectID: 10, EndOfRange: EndOfRangeUnknown,
+	})
+	require.NoError(t, err)
+
+	want := vi64.Append(nil, uint64(EndOfRangeUnknown))
+	want = append(want, 0x05, 0x0A)
+	assert.Equal(t, want, buf)
 }
 
 func TestFetchObjectTruncated(t *testing.T) {
