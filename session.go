@@ -79,6 +79,7 @@ type Session struct {
 	control *controlStreamPair
 
 	requestIDs *requestIDGenerator
+	peerIDs    *peerRequestIDs
 	remote     *remoteTrackIndex
 	prefixes   *prefixRegistry
 
@@ -133,6 +134,7 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.version = version
 	s.control = newControlStreamPair()
 	s.requestIDs = newRequestIDGenerator(conn.Perspective())
+	s.peerIDs = newPeerRequestIDs(conn.Perspective())
 	s.remote = newRemoteTrackIndex()
 	s.prefixes = newPrefixRegistry()
 	s.localAliases = map[string]uint64{}
@@ -147,7 +149,8 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	go func() {
 		select {
 		case <-ctx.Done():
-			s.closeWithError(SessionErrorNoError, "context cancelled")
+			// Nothing to report the close to: the caller has already moved on.
+			_ = s.closeWithError(SessionErrorNoError, "context cancelled")
 		case <-s.ctx.Done():
 		}
 	}()
@@ -155,17 +158,20 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	go s.acceptUniStreams()
 	go s.acceptBidiStreams()
 
+	// A handshake that fails takes the connection with it. The close is
+	// best-effort -- the caller is being told why by the returned error, and
+	// there is nothing useful to do if the close itself cannot be delivered.
 	setup, err := s.setupMessage()
 	if err != nil {
-		s.closeWithError(SessionErrorInternal, err.Error())
+		_ = s.closeWithError(SessionErrorInternal, err.Error())
 		return err
 	}
 	if err := s.control.open(ctx, conn, setup); err != nil {
-		s.closeWithError(SessionErrorInternal, err.Error())
+		_ = s.closeWithError(SessionErrorInternal, err.Error())
 		return err
 	}
 	if _, err := s.control.awaitPeerSetup(ctx); err != nil {
-		s.closeWithError(SessionErrorProtocolViolation, err.Error())
+		_ = s.closeWithError(SessionErrorProtocolViolation, err.Error())
 		return err
 	}
 
@@ -200,12 +206,14 @@ func (s *Session) closeWithError(code SessionErrorCode, reason string) error {
 // fail ends the session over a protocol error, using the error's own code
 // where it carries one.
 func (s *Session) fail(err error) {
+	// Whether the close itself reaches the peer changes nothing: the session
+	// is over either way, and there is no caller left to tell.
 	var protocolErr ProtocolError
 	if errors.As(err, &protocolErr) {
-		s.closeWithError(protocolErr.Code(), protocolErr.message)
+		_ = s.closeWithError(protocolErr.Code(), protocolErr.message)
 		return
 	}
-	s.closeWithError(SessionErrorProtocolViolation, err.Error())
+	_ = s.closeWithError(SessionErrorProtocolViolation, err.Error())
 }
 
 // setupMessage builds our SETUP. There is no version field: draft-17 removed
@@ -442,8 +450,9 @@ func (s *Session) dispatchUniStream(u pendingUniStream) {
 		s.handleSubgroupStream(u.stream, u.reader, u.streamType)
 	case wire2.UniStreamPadding:
 		// Padding carries nothing. Read it away so the sender's flow control
-		// is released, which is the only thing it wants.
-		io.Copy(io.Discard, u.reader)
+		// is released, which is the only thing it wants; how the stream ends
+		// is of no interest either way.
+		_, _ = io.Copy(io.Discard, u.reader)
 	case wire2.UniStreamFetch:
 		s.handleFetchStream(u.stream, u.reader)
 	}
@@ -525,6 +534,17 @@ func (s *Session) handleBidiStream(stream Stream) {
 		return
 	}
 
+	// Section 10.1: a Request ID with the wrong parity for its sender, or one
+	// already used, closes the session. Checking it here covers all seven
+	// request types at once, before any of them reaches a handler.
+	if requestID, ok := wire2.RequestID(msg); ok {
+		if err := s.peerIDs.use(requestID); err != nil {
+			rs.cancel(StreamErrorInternal, err)
+			s.fail(err)
+			return
+		}
+	}
+
 	switch m := msg.(type) {
 	case *wire2.Subscribe:
 		req := newSubscribeRequest(rs, s, m)
@@ -541,7 +561,7 @@ func (s *Session) handleBidiStream(stream Stream) {
 		if err != nil {
 			var rangeErr *fetchRangeError
 			if errors.As(err, &rangeErr) {
-				req.Reject(rangeErr.code, rangeErr.reason)
+				_ = req.Reject(rangeErr.code, rangeErr.reason)
 				return
 			}
 			rs.cancel(StreamErrorInternal, err)
@@ -572,7 +592,7 @@ func (s *Session) handleBidiStream(stream Stream) {
 		// sees the request is what keeps two overlapping requests arriving
 		// together from both passing.
 		if !s.prefixes.reserve(req.Prefix()) {
-			req.Reject(RequestErrorPrefixOverlap, "prefix overlaps an established namespace subscription")
+			_ = req.Reject(RequestErrorPrefixOverlap, "prefix overlaps an established namespace subscription")
 			return
 		}
 		defer s.prefixes.release(req.Prefix())

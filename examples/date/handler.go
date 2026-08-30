@@ -51,13 +51,13 @@ func (h *moqHandler) runServer(ctx context.Context, addr string, tlsConfig *tls.
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	wt := webtransport.Server{
 		H3:                   &http3.Server{Addr: addr, TLSConfig: tlsConfig},
 		ApplicationProtocols: moqtransport.SupportedALPNs(),
 	}
-	defer wt.Close()
+	defer func() { _ = wt.Close() }()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		} else {
 			// Closing this withdraws the announcement. There is no UNANNOUNCE
 			// in draft-18; the stream ending is the message.
-			defer publication.Close()
+			defer func() { _ = publication.Close() }()
 			log.Printf("announced namespace %v", h.namespace)
 		}
 	}
@@ -154,7 +154,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 			// on the peer's connection error, which reads as if the peer had
 			// done something wrong.
 			log.Printf("subscribing failed: %v", err)
-			session.Close(moqtransport.SessionErrorNoError, "nothing to subscribe to")
+			_ = session.Close(moqtransport.SessionErrorNoError, "nothing to subscribe to")
 			return
 		}
 	}

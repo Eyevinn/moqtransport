@@ -113,6 +113,31 @@ func (t ControlMessageType) String() string {
 	return fmt.Sprintf("unknown control message type: %v", uint64(t))
 }
 
+// RequestID returns the Request ID of a message that opens a request stream,
+// and whether it is one.
+//
+// All seven carry one (Section 10.1). Responses do not: the stream identifies
+// them, which is the whole change draft-18 made here.
+func RequestID(msg ControlMessage) (uint64, bool) {
+	switch m := msg.(type) {
+	case *Subscribe:
+		return m.RequestID, true
+	case *Publish:
+		return m.RequestID, true
+	case *Fetch:
+		return m.RequestID, true
+	case *TrackStatus:
+		return m.RequestID, true
+	case *PublishNamespace:
+		return m.RequestID, true
+	case *SubscribeNamespace:
+		return m.RequestID, true
+	case *SubscribeTracks:
+		return m.RequestID, true
+	}
+	return 0, false
+}
+
 // StreamScope is the codepoint namespace a control message is dispatched in.
 //
 // draft-18 reuses codepoints across stream kinds, so there is no single flat

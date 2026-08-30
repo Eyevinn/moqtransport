@@ -29,14 +29,17 @@ func TestMain(m *testing.M) {
 // freePort returns a UDP port that is free right now. Nothing can reserve one
 // across the gap before the server binds it, but on a loopback test host the
 // window is not worth more machinery.
+//
+// The probe binds the wildcard address rather than a loopback one: a runner
+// without IPv6 cannot bind ::1, and one without IPv4 cannot bind 127.0.0.1.
 func freePort(t *testing.T) string {
 	t.Helper()
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6loopback})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
 		t.Fatalf("finding a free port: %v", err)
 	}
 	port := conn.LocalAddr().(*net.UDPAddr).Port
-	conn.Close()
+	_ = conn.Close()
 	return fmt.Sprintf("localhost:%d", port)
 }
 
@@ -242,7 +245,7 @@ func TestSubscribeUnknownTrack(t *testing.T) {
 	if err := session.Run(ctx, conn); err != nil {
 		t.Fatalf("running the session: %v", err)
 	}
-	defer session.Close(moqtransport.SessionErrorNoError, "test over")
+	defer func() { _ = session.Close(moqtransport.SessionErrorNoError, "test over") }()
 
 	_, err = session.Subscribe(ctx, []string{"clock"}, "minute")
 	if err == nil {
