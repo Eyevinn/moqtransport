@@ -110,6 +110,18 @@ var (
 	// 2^64-1.
 	errSubgroupIDOverflow = errors.New("subgroup ID plus one overflows")
 
+	// errInvalidFilterType means a Subscription Filter named a Filter Type
+	// outside the four Section 5.1.2 defines.
+	errInvalidFilterType = errors.New("invalid subscription filter type")
+
+	// errEndGroupOverflow means an AbsoluteRange filter's Start Group plus its
+	// End Group Delta would exceed 2^64-1.
+	errEndGroupOverflow = errors.New("subscription filter end group overflows")
+
+	// errInvalidGroupOrder means a GROUP_ORDER parameter was neither Ascending
+	// nor Descending.
+	errInvalidGroupOrder = errors.New("invalid group order")
+
 	// errGroupIDNotAscending and errGroupIDNotDescending mean a FETCH response
 	// was written with Groups out of the order it declared. The Group ID Delta
 	// only moves one way, so the encoding cannot express it.
