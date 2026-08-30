@@ -282,7 +282,7 @@ var (
 	// errNotARequestMessage is a bidirectional stream that began with a
 	// message type not allowed to open one (Section 3.3).
 	errNotARequestMessage = ProtocolError{
-		code:    ErrorCodeProtocolViolation,
+		code:    SessionErrorProtocolViolation,
 		message: "bidirectional stream did not begin with a request message",
 	}
 )
