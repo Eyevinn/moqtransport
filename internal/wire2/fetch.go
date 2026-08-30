@@ -28,6 +28,27 @@ func (t FetchType) String() string {
 	return "UNKNOWN"
 }
 
+// AppendFetchHeader writes the stream type and Request ID that together open a
+// FETCH response stream (Section 11.4.4).
+//
+// It is not a control message: a data stream header carries no Message Length,
+// so it cannot go through AppendControlMessage even though its codepoint sits
+// in the same numeric space.
+func AppendFetchHeader(buf []byte, requestID uint64) []byte {
+	buf = vi64.Append(buf, uint64(StreamTypeFetchHeader))
+	return vi64.Append(buf, requestID)
+}
+
+// ParseFetchHeader reads the Request ID that follows a FETCH_HEADER stream
+// type the caller has already read.
+func ParseFetchHeader(r io.ByteReader) (uint64, error) {
+	requestID, err := vi64.Read(r)
+	if err != nil {
+		return 0, unexpectedEOF(err)
+	}
+	return requestID, nil
+}
+
 // StandaloneFetch names a track and an explicit range, and is present when
 // FetchType is FetchTypeStandalone.
 type StandaloneFetch struct {

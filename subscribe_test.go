@@ -14,11 +14,12 @@ import (
 // fakePublisherSession stands in for the session a subscription belongs to. It
 // hands out aliases per track and records everything that leaves.
 type fakePublisherSession struct {
-	mu        sync.Mutex
-	aliases   map[string]uint64
-	streams   []*sendCapture
-	datagrams [][]byte
-	openErr   error
+	mu            sync.Mutex
+	aliases       map[string]uint64
+	streams       []*sendCapture
+	datagrams     [][]byte
+	subscriptions map[uint64]*Subscription
+	openErr       error
 
 	t *testing.T
 }
@@ -58,6 +59,21 @@ func (s *fakePublisherSession) sendDatagram(b []byte) error {
 	defer s.mu.Unlock()
 	s.datagrams = append(s.datagrams, b)
 	return nil
+}
+
+func (s *fakePublisherSession) registerSubscription(requestID uint64, sub *Subscription) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.subscriptions == nil {
+		s.subscriptions = map[uint64]*Subscription{}
+	}
+	s.subscriptions[requestID] = sub
+}
+
+func (s *fakePublisherSession) unregisterSubscription(requestID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.subscriptions, requestID)
 }
 
 // newIncomingSubscribe builds an incoming SUBSCRIBE as if the session's accept

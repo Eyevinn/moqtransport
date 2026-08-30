@@ -38,6 +38,10 @@ type Session struct {
 	// peer asks about a track without subscribing to it.
 	TrackStatusHandler TrackStatusHandler
 
+	// FetchHandler answers incoming FETCH requests, by which a peer asks for a
+	// range of Objects that already exist.
+	FetchHandler FetchHandler
+
 	// Path is the PATH Setup Option, the path-abempty portion of a moqt:// URI.
 	// It is for native QUIC clients only: a server that sends one, or anyone
 	// who sends one over WebTransport, has the session closed.
@@ -75,6 +79,14 @@ type Session struct {
 	mu             sync.Mutex
 	nextTrackAlias uint64
 	localAliases   map[string]uint64
+
+	// incomingSubs indexes the subscriptions this endpoint has accepted, by
+	// the Request ID the peer gave them. A Joining FETCH names one of these.
+	incomingSubs map[uint64]*Subscription
+
+	// outgoingFetches indexes the fetches this endpoint has made, by the
+	// Request ID it gave them. A FETCH response stream carries only that ID.
+	outgoingFetches map[uint64]*FetchStream
 }
 
 // trackAliasWait is how long an incoming data stream waits for the control
@@ -112,6 +124,8 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.remote = newRemoteTrackIndex()
 	s.prefixes = newPrefixRegistry()
 	s.localAliases = map[string]uint64{}
+	s.incomingSubs = map[uint64]*Subscription{}
+	s.outgoingFetches = map[uint64]*FetchStream{}
 	s.pendingUni = newPendingStreams[pendingUniStream](s.MaxPendingStreams)
 	s.pendingBidi = newPendingStreams[Stream](s.MaxPendingStreams)
 	s.ctx, s.cancel = context.WithCancelCause(context.WithoutCancel(ctx))
@@ -288,6 +302,49 @@ func (s *Session) trackAlias(namespace []string, track string) uint64 {
 	return alias
 }
 
+// registerSubscription implements publisherSession.
+func (s *Session) registerSubscription(requestID uint64, sub *Subscription) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.incomingSubs[requestID] = sub
+}
+
+// unregisterSubscription implements publisherSession.
+func (s *Session) unregisterSubscription(requestID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.incomingSubs, requestID)
+}
+
+// subscriptionByRequestID implements fetchSession.
+func (s *Session) subscriptionByRequestID(requestID uint64) (*Subscription, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.incomingSubs[requestID]
+	return sub, ok
+}
+
+// registerFetch implements fetchSession.
+func (s *Session) registerFetch(requestID uint64, f *FetchStream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.outgoingFetches[requestID] = f
+}
+
+// unregisterFetch implements fetchSession.
+func (s *Session) unregisterFetch(requestID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.outgoingFetches, requestID)
+}
+
+func (s *Session) fetchByRequestID(requestID uint64) (*FetchStream, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.outgoingFetches[requestID]
+	return f, ok
+}
+
 // openUniStream implements publisherSession.
 func (s *Session) openUniStream(ctx context.Context) (SendStream, error) {
 	return s.conn.OpenUniStreamSync(ctx)
@@ -376,9 +433,7 @@ func (s *Session) dispatchUniStream(u pendingUniStream) {
 		// is released, which is the only thing it wants.
 		io.Copy(io.Discard, u.reader)
 	case wire2.UniStreamFetch:
-		// FETCH is not implemented on this branch yet. Telling the publisher
-		// to stop is better than reading a response nothing will consume.
-		u.stream.Stop(uint32(StreamErrorInternal))
+		s.handleFetchStream(u.stream, u.reader)
 	}
 }
 
@@ -462,6 +517,26 @@ func (s *Session) handleBidiStream(stream Stream) {
 	case *wire2.Subscribe:
 		req := newSubscribeRequest(rs, s, m)
 		if err := req.serve(s.SubscribeHandler); err != nil {
+			s.failIfProtocolError(err)
+		}
+
+	case *wire2.Fetch:
+		// A Joining FETCH names a subscription instead of a range, and
+		// resolving it can fail in ways the draft gives specific codes for.
+		// Doing it here rather than in the handler means the handler only ever
+		// sees a request with a range.
+		req, err := newFetchRequest(rs, s, m)
+		if err != nil {
+			var rangeErr *fetchRangeError
+			if errors.As(err, &rangeErr) {
+				req.Reject(rangeErr.code, rangeErr.reason)
+				return
+			}
+			rs.cancel(StreamErrorInternal, err)
+			s.fail(err)
+			return
+		}
+		if err := req.serve(s.FetchHandler); err != nil {
 			s.failIfProtocolError(err)
 		}
 
