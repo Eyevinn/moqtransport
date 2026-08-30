@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
+	"github.com/mengelbart/qlog/moqt"
 )
 
 // FetchHandler answers FETCH requests, by which a subscriber asks for a range
@@ -154,9 +155,11 @@ func (r *FetchRequest) Accept(opts ...FetchOkOption) (*FetchResponse, error) {
 		stream.Reset(uint32(StreamErrorInternal))
 		return nil, err
 	}
+	r.qlog.logStreamType(moqt.OwnerLocal, stream, moqt.StreamTypeFetchHeader)
 	return &FetchResponse{
 		stream: stream,
 		writer: wire2.NewFetchWriter(r.order),
+		qlog:   r.qlog,
 	}, nil
 }
 
@@ -207,6 +210,7 @@ type FetchResponse struct {
 	mu     sync.Mutex
 	stream SendStream
 	writer *wire2.FetchWriter
+	qlog   qlogger
 	done   bool
 }
 
@@ -253,8 +257,11 @@ func (f *FetchResponse) write(obj *wire2.FetchObject) error {
 	if err != nil {
 		return err
 	}
-	_, err = f.stream.Write(buf)
-	return err
+	if _, err := f.stream.Write(buf); err != nil {
+		return err
+	}
+	f.qlog.logFetchObject(moqt.FetchObjectEventCreated, f.stream, obj)
+	return nil
 }
 
 // Close finishes the response with a FIN, which is what tells the subscriber
@@ -588,7 +595,7 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	fetch := &FetchStream{
 		requestStream: rs,
 		session:       s,
@@ -747,6 +754,7 @@ func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) 
 			fetch.responseComplete(false)
 			return
 		}
+		s.qlog.logFetchObject(moqt.FetchObjectEventParsed, stream, record)
 		preference := ObjectForwardingPreferenceSubgroup
 		if record.Datagram {
 			preference = ObjectForwardingPreferenceDatagram

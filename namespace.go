@@ -204,7 +204,7 @@ func (s *Session) PublishNamespace(ctx context.Context, namespace []string) (*Na
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	publication := &NamespacePublication{
 		requestStream: rs,
 		requestID:     msg.RequestID,
@@ -537,7 +537,7 @@ func (s *Session) SubscribeNamespace(ctx context.Context, prefix []string) (*Nam
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	subscription := &NamespaceSubscription{
 		requestStream: rs,
 		requestID:     msg.RequestID,

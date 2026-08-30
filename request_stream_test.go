@@ -119,7 +119,7 @@ func newRequestStreamPeer(t *testing.T, parent context.Context) (*requestStream,
 	// goleak would have nothing to report because the goroutine never ends.
 	t.Cleanup(func() { p.incoming.close(io.EOF) })
 
-	return newRequestStream(parent, stream), p
+	return newRequestStream(parent, stream, qlogger{}), p
 }
 
 var errStreamReaderStopped = errors.New("stream reader stopped")

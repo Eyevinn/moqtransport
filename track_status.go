@@ -141,7 +141,7 @@ func (s *Session) TrackStatus(ctx context.Context, namespace []string, track str
 	if err != nil {
 		return TrackStatus{}, err
 	}
-	rs := newRequestStream(s.ctx, stream)
+	rs := newRequestStream(s.ctx, stream, s.qlog)
 	pending := &trackStatusRequest{answered: make(chan struct{})}
 
 	go func() {
