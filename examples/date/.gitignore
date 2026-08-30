@@ -1,0 +1,5 @@
+# Built by "go build" in this directory.
+date
+
+# Certificates for local testing.
+*.pem

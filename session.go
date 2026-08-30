@@ -13,6 +13,18 @@ import (
 	"github.com/Eyevinn/moqtransport/internal/wire2"
 )
 
+// Version identifies the MOQT draft a session speaks.
+type Version = wire2.Version
+
+// SupportedALPNs returns the protocol identifiers this build speaks, most
+// preferred first.
+//
+// Use it for a QUIC NextProtos list and for a WebTransport subprotocol list.
+// From draft-17 onwards the identifier is the whole of MOQT version
+// negotiation: SETUP carries no version field, so a session that negotiated
+// something else cannot recover in band.
+func SupportedALPNs() []string { return wire2.SupportedALPNs() }
+
 // Session is one MOQT session over a [Connection]
 // (draft-ietf-moq-transport-18, Section 3.3).
 //
@@ -170,7 +182,7 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 }
 
 // Version returns the draft this session speaks.
-func (s *Session) Version() wire2.Version { return s.version }
+func (s *Session) Version() Version { return s.version }
 
 // Context is cancelled when the session ends. [context.Cause] says why.
 func (s *Session) Context() context.Context { return s.ctx }
