@@ -19,6 +19,8 @@ type fakePublisherSession struct {
 	streams       []*sendCapture
 	datagrams     [][]byte
 	subscriptions map[uint64]*Subscription
+	mapper        PriorityMapper
+	prioritized   []*prioritizedStream
 	openErr       error
 
 	t *testing.T
@@ -48,10 +50,14 @@ func (s *fakePublisherSession) openUniStream(context.Context) (SendStream, error
 		return nil, s.openErr
 	}
 	stream, capture := newSendCapture(s.t)
+	// Wrapped so the stream can be scheduled: no released transport can be
+	// yet, and a session that never reaches the mapper would test nothing.
+	prioritized := &prioritizedStream{SendStream: stream}
 	s.mu.Lock()
 	s.streams = append(s.streams, capture)
+	s.prioritized = append(s.prioritized, prioritized)
 	s.mu.Unlock()
-	return stream, nil
+	return prioritized, nil
 }
 
 func (s *fakePublisherSession) sendDatagram(b []byte) error {
@@ -74,6 +80,13 @@ func (s *fakePublisherSession) unregisterSubscription(requestID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.subscriptions, requestID)
+}
+
+func (s *fakePublisherSession) priorityMapper() PriorityMapper {
+	if s.mapper != nil {
+		return s.mapper
+	}
+	return DefaultPriorityMapper
 }
 
 // newIncomingSubscribe builds an incoming SUBSCRIBE as if the session's accept
