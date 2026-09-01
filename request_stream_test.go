@@ -22,16 +22,25 @@ import (
 // "queue a message, then read it" -- which is exactly how a test drives a
 // request stream -- would deadlock.
 type streamPipe struct {
-	mu   sync.Mutex
-	cond *sync.Cond
-	buf  bytes.Buffer
-	err  error
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	err   error
+	ready chan struct{} // signalled (never blocking) on Write and close
 }
 
+// A reader blocks on the ready channel rather than a sync.Cond so that the
+// block is durable in testing/synctest's sense: a bubbled test can then let
+// fake time advance while a stream reader waits for bytes. Every stream has
+// one reader goroutine, which is what the single-slot wake-up assumes.
 func newStreamPipe() *streamPipe {
-	p := &streamPipe{}
-	p.cond = sync.NewCond(&p.mu)
-	return p
+	return &streamPipe{ready: make(chan struct{}, 1)}
+}
+
+func (p *streamPipe) signal() {
+	select {
+	case p.ready <- struct{}{}:
+	default:
+	}
 }
 
 func (p *streamPipe) Write(b []byte) (int, error) {
@@ -41,20 +50,26 @@ func (p *streamPipe) Write(b []byte) (int, error) {
 		return 0, p.err
 	}
 	n, err := p.buf.Write(b)
-	p.cond.Broadcast()
+	p.signal()
 	return n, err
 }
 
 func (p *streamPipe) Read(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for p.buf.Len() == 0 && p.err == nil {
-		p.cond.Wait()
+	for {
+		p.mu.Lock()
+		if p.buf.Len() > 0 {
+			n, err := p.buf.Read(b)
+			p.mu.Unlock()
+			return n, err
+		}
+		if p.err != nil {
+			err := p.err
+			p.mu.Unlock()
+			return 0, err
+		}
+		p.mu.Unlock()
+		<-p.ready
 	}
-	if p.buf.Len() > 0 {
-		return p.buf.Read(b)
-	}
-	return 0, p.err
 }
 
 // close ends the stream. Readers drain whatever is still buffered and then
@@ -65,7 +80,7 @@ func (p *streamPipe) close(err error) {
 	if p.err == nil {
 		p.err = err
 	}
-	p.cond.Broadcast()
+	p.signal()
 }
 
 // requestStreamPeer drives a requestStream from the other end of the wire:

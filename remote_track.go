@@ -322,8 +322,9 @@ const unknownStreamCount = 1<<62 - 1
 // PUBLISH_DONE announced. The missing ones are usually milliseconds behind
 // the control stream; ones that never come (reset before their header could
 // name this subscription, or a miscounting publisher) must not hold the
-// subscription open forever. A variable for the tests.
-var publishDoneGrace = time.Second
+// subscription open forever. The tests run under testing/synctest, where the
+// second is fake time, so nothing needs to override it.
+const publishDoneGrace = time.Second
 
 // awaitDataStreams ends delivery once the announced number of data streams
 // has ended, or the grace period has, or something else (Close, the session)

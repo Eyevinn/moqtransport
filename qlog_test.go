@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
@@ -49,66 +50,68 @@ func eventNames(events []map[string]any) []string {
 // A session with a logger records the whole exchange: the handshake, every
 // control message on both sides, the data streams and the Objects on them.
 func TestQlogRecordsASession(t *testing.T) {
-	var clientLog, serverLog bytes.Buffer
+	synctest.Test(t, func(t *testing.T) {
+		var clientLog, serverLog bytes.Buffer
 
-	published := make(chan *Subscription, 1)
-	server := &Session{
-		Qlogger: qlog.NewQLOGHandler(&serverLog, "test", "test", "server", QlogSchema),
-		SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
-			subscription, err := r.Accept(WithLargestObject(Location{Group: 3}))
-			if err != nil {
-				return
-			}
-			published <- subscription
-		}),
-	}
-	client := &Session{
-		Qlogger: qlog.NewQLOGHandler(&clientLog, "test", "test", "client", QlogSchema),
-	}
-	runSessions(t, client, server)
+		published := make(chan *Subscription, 1)
+		server := &Session{
+			Qlogger: qlog.NewQLOGHandler(&serverLog, "test", "test", "server", QlogSchema),
+			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+				subscription, err := r.Accept(WithLargestObject(Location{Group: 3}))
+				if err != nil {
+					return
+				}
+				published <- subscription
+			}),
+		}
+		client := &Session{
+			Qlogger: qlog.NewQLOGHandler(&clientLog, "test", "test", "client", QlogSchema),
+		}
+		runSessions(t, client, server)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	track, err := client.Subscribe(ctx, []string{"example.com"}, "video0")
-	require.NoError(t, err)
-	subscription := <-published
-
-	sg, err := subscription.OpenSubgroup(3, 0, 128, WithObjectProperties())
-	require.NoError(t, err)
-	_, err = sg.WriteObjectWithProperties(0,
-		KVPList{{Type: wire2.PropertyPriorObjectIDGap, ValueVarInt: 2}}, []byte("payload"))
-	require.NoError(t, err)
-	require.NoError(t, sg.Close())
-
-	require.NoError(t, subscription.SendDatagram(Object{GroupID: 4, Priority: 9, Payload: []byte("d")}))
-
-	// Two Objects in, so both data paths have been logged by the time this
-	// returns.
-	for range 2 {
-		_, err := track.ReadObject(ctx)
+		track, err := client.Subscribe(ctx, []string{"example.com"}, "video0")
 		require.NoError(t, err)
-	}
+		subscription := <-published
 
-	clientNames := eventNames(qlogEvents(t, clientLog.Bytes()))
-	serverNames := eventNames(qlogEvents(t, serverLog.Bytes()))
+		sg, err := subscription.OpenSubgroup(3, 0, 128, WithObjectProperties())
+		require.NoError(t, err)
+		_, err = sg.WriteObjectWithProperties(0,
+			KVPList{{Type: wire2.PropertyPriorObjectIDGap, ValueVarInt: 2}}, []byte("payload"))
+		require.NoError(t, err)
+		require.NoError(t, sg.Close())
 
-	// The client sends SETUP and SUBSCRIBE and reads the peer's SETUP and
-	// SUBSCRIBE_OK, so it sees control messages in both directions.
-	assert.Contains(t, clientNames, "control_message_created")
-	assert.Contains(t, clientNames, "control_message_parsed")
-	assert.Contains(t, serverNames, "control_message_created")
-	assert.Contains(t, serverNames, "control_message_parsed")
+		require.NoError(t, subscription.SendDatagram(Object{GroupID: 4, Priority: 9, Payload: []byte("d")}))
 
-	// The publisher opens the subgroup and writes on it; the subscriber reads
-	// it. Both ends record the stream and the Object.
-	assert.Contains(t, serverNames, "stream_type_set")
-	assert.Contains(t, serverNames, "subgroup_object_created")
-	assert.Contains(t, clientNames, "stream_type_set")
-	assert.Contains(t, clientNames, "subgroup_object_parsed")
+		// Two Objects in, so both data paths have been logged by the time this
+		// returns.
+		for range 2 {
+			_, err := track.ReadObject(ctx)
+			require.NoError(t, err)
+		}
 
-	assert.Contains(t, serverNames, "object_datagram_created")
-	assert.Contains(t, clientNames, "object_datagram_parsed")
+		clientNames := eventNames(qlogEvents(t, clientLog.Bytes()))
+		serverNames := eventNames(qlogEvents(t, serverLog.Bytes()))
+
+		// The client sends SETUP and SUBSCRIBE and reads the peer's SETUP and
+		// SUBSCRIBE_OK, so it sees control messages in both directions.
+		assert.Contains(t, clientNames, "control_message_created")
+		assert.Contains(t, clientNames, "control_message_parsed")
+		assert.Contains(t, serverNames, "control_message_created")
+		assert.Contains(t, serverNames, "control_message_parsed")
+
+		// The publisher opens the subgroup and writes on it; the subscriber reads
+		// it. Both ends record the stream and the Object.
+		assert.Contains(t, serverNames, "stream_type_set")
+		assert.Contains(t, serverNames, "subgroup_object_created")
+		assert.Contains(t, clientNames, "stream_type_set")
+		assert.Contains(t, clientNames, "subgroup_object_parsed")
+
+		assert.Contains(t, serverNames, "object_datagram_created")
+		assert.Contains(t, clientNames, "object_datagram_parsed")
+	})
 }
 
 // The message body is rendered field by field, so a log says what was actually
