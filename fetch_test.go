@@ -228,7 +228,10 @@ func TestJoiningFetchErrors(t *testing.T) {
 			_, _ = r.Accept(WithLargestObject(Location{Group: 4, Object: 1}))
 		}),
 		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
-			fetched <- struct{}{}
+			select {
+			case fetched <- struct{}{}:
+			default:
+			}
 			_ = r.Reject(RequestErrorInternal, "should not be reached")
 		}),
 	}
@@ -259,14 +262,25 @@ func TestJoiningFetchErrors(t *testing.T) {
 	require.ErrorAs(t, err, &reqErr)
 	assert.Equal(t, RequestErrorInvalidRange, reqErr.Code)
 
-	// A subscription that has ended is no longer there to join.
+	// A subscription that has ended is no longer there to join. The close is
+	// a stream reset with no answer, so poll until the server has processed
+	// it; a poll that arrives first still resolves and legitimately reaches
+	// the handler, which is why those hits are drained before the assertion.
 	require.NoError(t, track.Close())
 	require.Eventually(t, func() bool {
 		_, err := client.FetchRelative(ctx, track, 1)
 		var e *RequestError
 		return errors.As(err, &e) && e.Code == RequestErrorInvalidJoiningRequestID
 	}, 2*time.Second, 10*time.Millisecond)
+	for len(fetched) > 0 {
+		<-fetched
+	}
 
+	// Now that the subscription is provably gone, an unresolvable joining
+	// fetch must be rejected by the library without reaching the handler.
+	_, err = client.FetchRelative(ctx, track, 1)
+	require.ErrorAs(t, err, &reqErr)
+	assert.Equal(t, RequestErrorInvalidJoiningRequestID, reqErr.Code)
 	select {
 	case <-fetched:
 		t.Fatal("an unresolvable joining fetch reached the handler")
