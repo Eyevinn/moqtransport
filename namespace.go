@@ -176,12 +176,8 @@ func (p *NamespacePublication) handleMessage(msg wire2.ControlMessage) error {
 }
 
 func (p *NamespacePublication) awaitEstablished(ctx context.Context) error {
-	select {
-	case <-p.established:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-p.ctx.Done():
-		return context.Cause(p.ctx)
+	if err := awaitAnswer(ctx, p.established, p.ctx); err != nil {
+		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -512,12 +508,8 @@ func (n *NamespaceSubscription) emit(suffix []string, available bool) error {
 }
 
 func (n *NamespaceSubscription) awaitEstablished(ctx context.Context) error {
-	select {
-	case <-n.established:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-n.ctx.Done():
-		return context.Cause(n.ctx)
+	if err := awaitAnswer(ctx, n.established, n.ctx); err != nil {
+		return err
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()

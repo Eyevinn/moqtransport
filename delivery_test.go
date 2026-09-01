@@ -209,3 +209,31 @@ func TestQlogHandlerInterface(t *testing.T) {
 
 	assert.Positive(t, counter.events.Load())
 }
+
+// TestFetchFastEnd is the FETCH flavor of the fast-end race: a publisher that
+// accepts and closes an empty response in one breath completes the fetch
+// while FETCH_OK is still being awaited, and the answer must win.
+func TestFetchFastEnd(t *testing.T) {
+	server := &Session{
+		FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
+			response, err := r.Accept()
+			if err != nil {
+				return
+			}
+			_ = response.Close()
+		}),
+	}
+	client := &Session{}
+	runSessions(t, client, server)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for range 40 {
+		fetch, err := client.Fetch(ctx, []string{"fast"}, "track",
+			Location{}, Location{Group: 1})
+		require.NoError(t, err, "FETCH_OK must win over the response completing")
+		_, err = fetch.ReadObject(ctx)
+		require.ErrorIs(t, err, ErrFetchComplete)
+	}
+}

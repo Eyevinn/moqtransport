@@ -274,26 +274,8 @@ func (t *RemoteTrack) Close() error {
 
 // awaitEstablished blocks until the publisher has answered the SUBSCRIBE.
 func (t *RemoteTrack) awaitEstablished(ctx context.Context) error {
-	// An answer that has arrived wins over the request ending: SUBSCRIBE_OK
-	// and the stream's end can land near-simultaneously (a publisher that
-	// serves and closes quickly), both channels are then ready, and a random
-	// select pick must not turn an accepted subscription into an error. A
-	// stream that ended without an answer closes established too, with
-	// answerErr carrying the cause, so preferring established loses nothing.
-	select {
-	case <-t.established:
-	default:
-		select {
-		case <-t.established:
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-t.ctx.Done():
-			select {
-			case <-t.established:
-			default:
-				return context.Cause(t.ctx)
-			}
-		}
+	if err := awaitAnswer(ctx, t.established, t.ctx); err != nil {
+		return err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
