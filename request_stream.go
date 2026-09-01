@@ -278,6 +278,34 @@ func (r *requestStream) readAll(handle func(wire2.ControlMessage) error) error {
 	}
 }
 
+// awaitAnswer blocks until a request has been answered, preferring an answer
+// that has arrived over the request ending: the two can land
+// near-simultaneously (a peer that answers and finishes in one breath), both
+// channels are then ready, and a random select pick must not turn an answered
+// request into an error. A request that ended without an answer closes
+// established too, with the cause recorded in its answer error, so preferring
+// established loses nothing.
+func awaitAnswer(ctx context.Context, established <-chan struct{}, request context.Context) error {
+	select {
+	case <-established:
+		return nil
+	default:
+	}
+	select {
+	case <-established:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-request.Done():
+		select {
+		case <-established:
+			return nil
+		default:
+			return context.Cause(request)
+		}
+	}
+}
+
 var (
 	// errRequestStreamSendClosed means a message was written after our half of
 	// the stream was finished or reset.

@@ -529,12 +529,8 @@ func (f *FetchStream) handleMessage(msg wire2.ControlMessage) error {
 }
 
 func (f *FetchStream) awaitEstablished(ctx context.Context) error {
-	select {
-	case <-f.established:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-f.ctx.Done():
-		return context.Cause(f.ctx)
+	if err := awaitAnswer(ctx, f.established, f.ctx); err != nil {
+		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
