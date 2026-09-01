@@ -119,4 +119,20 @@ type Object struct {
 	// non-Normal status always has an empty payload and no properties.
 	Status  ObjectStatus
 	Payload []byte
+
+	// EndOfGroup mirrors the END_OF_GROUP bit of the subgroup header or
+	// datagram this Object arrived in: the subgroup carries the largest
+	// Object of its Group (for a datagram, this Object is it), so a clean end
+	// means no later Object in the Group exists. It is set on received
+	// Objects only; when publishing, the bit is set with [WithEndOfGroup] on
+	// the subgroup instead.
+	EndOfGroup bool
+
+	// EndsSubgroup and SubgroupReset mark a synthetic record, delivered when
+	// a subgroup stream ends on a session with [Session.SubgroupEndEvents]
+	// set: EndsSubgroup for a clean FIN (every Object of the subgroup was
+	// delivered), SubgroupReset for a reset (Objects may be missing). Such a
+	// record carries no payload, and its ObjectID is meaningless.
+	EndsSubgroup  bool
+	SubgroupReset bool
 }
