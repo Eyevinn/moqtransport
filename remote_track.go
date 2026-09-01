@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
 )
@@ -53,16 +54,30 @@ type RemoteTrack struct {
 
 	// objects is never closed. Its senders are the reader goroutines of every
 	// subgroup stream and the session's datagram loop, so there is no single
-	// goroutine that could close it safely; ReadObject uses the request's
+	// goroutine that could close it safely; ReadObject uses the delivery
 	// context to know when no more will come.
 	objects chan *Object
 
-	mu          sync.Mutex
-	trackAlias  uint64
-	params      wire2.Parameters
-	properties  KVPList
-	answerErr   error
-	publishDone *PublishDone
+	// delivery is the lifetime of Object delivery, distinct from the request
+	// stream's: PUBLISH_DONE travels on the request stream and usually
+	// overtakes late data streams, so after a clean end delivery stays open
+	// until the announced StreamCount of data streams has ended (or a grace
+	// period gives up on them). Its parent is the session's context, so a
+	// dying session still ends it.
+	deliveryCtx    context.Context
+	cancelDelivery context.CancelCauseFunc
+
+	// streamEnded is signalled (never blocking) each time a data stream of
+	// this subscription ends, waking the StreamCount wait.
+	streamEnded chan struct{}
+
+	mu           sync.Mutex
+	trackAlias   uint64
+	params       wire2.Parameters
+	properties   KVPList
+	answerErr    error
+	publishDone  *PublishDone
+	endedStreams uint64
 }
 
 // remoteTrackObjectBuffer is how many Objects are held for a consumer that is
@@ -71,15 +86,20 @@ type RemoteTrack struct {
 // the publisher finds out.
 const remoteTrackObjectBuffer = 64
 
-func newRemoteTrack(rs *requestStream, session subscriberSession, requestID uint64, namespace []string, track string) *RemoteTrack {
+func newRemoteTrack(sessionCtx context.Context, rs *requestStream, session subscriberSession,
+	requestID uint64, namespace []string, track string) *RemoteTrack {
+	deliveryCtx, cancelDelivery := context.WithCancelCause(sessionCtx)
 	return &RemoteTrack{
-		requestStream: rs,
-		session:       session,
-		requestID:     requestID,
-		namespace:     namespace,
-		track:         track,
-		established:   make(chan struct{}),
-		objects:       make(chan *Object, remoteTrackObjectBuffer),
+		requestStream:  rs,
+		session:        session,
+		requestID:      requestID,
+		namespace:      namespace,
+		track:          track,
+		established:    make(chan struct{}),
+		objects:        make(chan *Object, remoteTrackObjectBuffer),
+		deliveryCtx:    deliveryCtx,
+		cancelDelivery: cancelDelivery,
+		streamEnded:    make(chan struct{}, 1),
 	}
 }
 
@@ -150,10 +170,12 @@ func (t *RemoteTrack) PublishDone() (PublishDone, bool) {
 
 // ReadObject returns the next Object, blocking until one arrives.
 //
-// It returns the reason the subscription ended once there are no Objects left:
-// the publisher's PUBLISH_DONE, a reset from either side, or the session going
-// away. Objects already received are drained first, so nothing that arrived is
-// lost to a race with the ending.
+// It returns the reason the subscription ended once there are no Objects
+// left: the publisher's PUBLISH_DONE, a reset from either side, or the
+// session going away. Objects already received are drained first, and after a
+// clean PUBLISH_DONE delivery stays open until the StreamCount of data
+// streams it announced have ended, so nothing a data stream carried is lost
+// to the control stream overtaking it.
 func (t *RemoteTrack) ReadObject(ctx context.Context) (*Object, error) {
 	// Anything already buffered comes first, whatever else has happened.
 	select {
@@ -167,7 +189,7 @@ func (t *RemoteTrack) ReadObject(ctx context.Context) (*Object, error) {
 		return o, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-t.ctx.Done():
+	case <-t.deliveryCtx.Done():
 		// The subscription ended while we waited. Drain whatever raced in
 		// before reporting it.
 		select {
@@ -175,7 +197,7 @@ func (t *RemoteTrack) ReadObject(ctx context.Context) (*Object, error) {
 			return o, nil
 		default:
 		}
-		return nil, context.Cause(t.ctx)
+		return nil, context.Cause(t.deliveryCtx)
 	}
 }
 
@@ -188,8 +210,37 @@ func (t *RemoteTrack) deliver(ctx context.Context, o *Object) error {
 		return nil
 	case <-ctx.Done():
 		return context.Cause(ctx)
-	case <-t.ctx.Done():
-		return context.Cause(t.ctx)
+	case <-t.deliveryCtx.Done():
+		return context.Cause(t.deliveryCtx)
+	}
+}
+
+// subgroupStreamEnded records that one of this subscription's subgroup
+// streams is over. With markers enabled it first delivers the synthetic
+// end-of-subgroup Object -- before counting, so the marker beats the
+// StreamCount-completed end of delivery.
+func (t *RemoteTrack) subgroupStreamEnded(ctx context.Context, header *wire2.SubgroupHeader,
+	recvErr error, markers bool) {
+	if markers {
+		marker := &Object{
+			GroupID:              header.GroupID,
+			SubgroupID:           header.SubgroupID,
+			ForwardingPreference: ObjectForwardingPreferenceSubgroup,
+			EndOfGroup:           header.EndOfGroup,
+		}
+		if recvErr != nil {
+			marker.SubgroupReset = true
+		} else {
+			marker.EndsSubgroup = true
+		}
+		_ = t.deliver(ctx, marker)
+	}
+	t.mu.Lock()
+	t.endedStreams++
+	t.mu.Unlock()
+	select {
+	case t.streamEnded <- struct{}{}:
+	default:
 	}
 }
 
@@ -213,20 +264,36 @@ func (t *RemoteTrack) Update(opts ...SubscribeUpdateOption) error {
 }
 
 // Close ends the subscription by resetting its request stream, which is what
-// draft-18 uses in place of UNSUBSCRIBE.
+// draft-18 uses in place of UNSUBSCRIBE. It also ends delivery at once: a
+// subscriber that closed is not waiting for straggling data streams.
 func (t *RemoteTrack) Close() error {
 	t.cancel(StreamErrorCancelled, errSubscriptionClosedLocally)
+	t.cancelDelivery(errSubscriptionClosedLocally)
 	return nil
 }
 
 // awaitEstablished blocks until the publisher has answered the SUBSCRIBE.
 func (t *RemoteTrack) awaitEstablished(ctx context.Context) error {
+	// An answer that has arrived wins over the request ending: SUBSCRIBE_OK
+	// and the stream's end can land near-simultaneously (a publisher that
+	// serves and closes quickly), both channels are then ready, and a random
+	// select pick must not turn an accepted subscription into an error. A
+	// stream that ended without an answer closes established too, with
+	// answerErr carrying the cause, so preferring established loses nothing.
 	select {
 	case <-t.established:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.ctx.Done():
-		return context.Cause(t.ctx)
+	default:
+		select {
+		case <-t.established:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.ctx.Done():
+			select {
+			case <-t.established:
+			default:
+				return context.Cause(t.ctx)
+			}
+		}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -238,7 +305,7 @@ func (t *RemoteTrack) run() error {
 	err := t.requestStream.run(t.handleMessage)
 
 	// Whatever ended the subscription, release anyone still waiting for the
-	// answer that is now never coming, and stop routing Objects to it.
+	// answer that is now never coming.
 	t.establishOnce.Do(func() {
 		t.mu.Lock()
 		if t.answerErr == nil {
@@ -248,6 +315,64 @@ func (t *RemoteTrack) run() error {
 		close(t.established)
 	})
 
+	// A clean end with a PUBLISH_DONE that counted its streams keeps delivery
+	// (and the Track Alias, which routes late data streams here) open until
+	// those streams have ended; anything else -- a reset, a session error, a
+	// publisher that could not count -- ends delivery now.
+	t.mu.Lock()
+	done := t.publishDone
+	ended := t.endedStreams
+	t.mu.Unlock()
+	cause := context.Cause(t.ctx)
+	if err == nil && done != nil && done.StreamCount != unknownStreamCount && ended < done.StreamCount {
+		go t.awaitDataStreams(cause, done.StreamCount)
+	} else {
+		t.finishDelivery(cause)
+	}
+	return err
+}
+
+// unknownStreamCount is the PUBLISH_DONE Stream Count of a publisher that
+// cannot count exactly (Section 10.11), so there is nothing to wait for.
+const unknownStreamCount = 1<<62 - 1
+
+// publishDoneGrace bounds how long delivery waits for the data streams a
+// PUBLISH_DONE announced. The missing ones are usually milliseconds behind
+// the control stream; ones that never come (reset before their header could
+// name this subscription, or a miscounting publisher) must not hold the
+// subscription open forever. A variable for the tests.
+var publishDoneGrace = time.Second
+
+// awaitDataStreams ends delivery once the announced number of data streams
+// has ended, or the grace period has, or something else (Close, the session)
+// ended delivery first.
+func (t *RemoteTrack) awaitDataStreams(cause error, want uint64) {
+	timer := time.NewTimer(publishDoneGrace)
+	defer timer.Stop()
+	for {
+		t.mu.Lock()
+		ended := t.endedStreams
+		t.mu.Unlock()
+		if ended >= want {
+			break
+		}
+		select {
+		case <-t.streamEnded:
+		case <-timer.C:
+			t.finishDelivery(cause)
+			return
+		case <-t.deliveryCtx.Done():
+			t.finishDelivery(context.Cause(t.deliveryCtx))
+			return
+		}
+	}
+	t.finishDelivery(cause)
+}
+
+// finishDelivery ends Object delivery and stops routing data streams here. It
+// is idempotent; the first cause wins.
+func (t *RemoteTrack) finishDelivery(cause error) {
+	t.cancelDelivery(cause)
 	t.mu.Lock()
 	alias := t.trackAlias
 	registered := t.params != nil
@@ -255,7 +380,6 @@ func (t *RemoteTrack) run() error {
 	if registered {
 		t.session.unregisterTrackAlias(alias, t)
 	}
-	return err
 }
 
 func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {

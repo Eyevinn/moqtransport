@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
-	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 )
 
@@ -73,8 +72,11 @@ type Session struct {
 	// receives: control messages, data stream types, Objects and datagrams.
 	// Nil disables it, which costs nothing beyond a nil check.
 	//
-	// Build one with qlog.NewQLOGHandler, passing [QlogSchema].
-	Qlogger *qlog.Logger
+	// Build one with qlog.NewQLOGHandler, passing [QlogSchema], or supply any
+	// [QlogHandler] to filter or route events before serialization. Assign an
+	// untyped nil to disable: an interface holding a nil *qlog.Logger is not
+	// nil, and will be called.
+	Qlogger QlogHandler
 
 	// PriorityMapper reduces a MOQT priority to the transport's, for every data
 	// stream this session opens. Nil uses [DefaultPriorityMapper].
@@ -89,6 +91,13 @@ type Session struct {
 	// is what makes the SHOULD safe against a peer that opens streams and never
 	// sends SETUP.
 	MaxPendingStreams int
+
+	// SubgroupEndEvents makes every subscription of this session deliver a
+	// synthetic Object when one of its subgroup streams ends -- EndsSubgroup
+	// for a FIN, SubgroupReset for a reset -- so a consumer (a relay
+	// re-emitting subgroups, say) can tell a complete subgroup from one with
+	// Objects missing. Off, subgroup ends are silent as before.
+	SubgroupEndEvents bool
 
 	conn    Connection
 	version wire2.Version
@@ -289,7 +298,7 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 		return nil, err
 	}
 	rs := newRequestStream(s.ctx, stream, s.qlog)
-	rt := newRemoteTrack(rs, s, msg.RequestID, namespace, track)
+	rt := newRemoteTrack(s.ctx, rs, s, msg.RequestID, namespace, track)
 
 	// The reader starts before the request goes out: the publisher may answer
 	// the moment it has the bytes, and a response that arrived while we were
@@ -525,6 +534,12 @@ func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reade
 	if err != nil {
 		s.failIfProtocolError(err)
 	}
+	// The stream is over: deliver the end-of-subgroup marker (on sessions
+	// that asked for one) and count the stream toward the PUBLISH_DONE
+	// Stream Count that lets the subscription finish.
+	for _, t := range tracks {
+		t.subgroupStreamEnded(s.ctx, header, err, s.SubgroupEndEvents)
+	}
 }
 
 // acceptBidiStreams takes the peer's request streams. Section 3.3 allows seven
@@ -699,6 +714,7 @@ func (s *Session) receiveDatagrams() {
 			Properties:           datagram.Properties,
 			Status:               datagram.Status,
 			Payload:              datagram.Payload,
+			EndOfGroup:           datagram.EndOfGroup,
 		}
 		for _, t := range tracks {
 			if err := t.deliver(s.ctx, object); err != nil {

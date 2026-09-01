@@ -351,6 +351,7 @@ type FetchStream struct {
 	mu          sync.Mutex
 	answerErr   error
 	endLocation Location
+	properties  KVPList
 	endOfTrack  bool
 	answered    bool
 	dataDone    bool
@@ -382,6 +383,14 @@ func (f *FetchStream) EndOfTrack() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.endOfTrack
+}
+
+// TrackProperties returns the Track Properties from FETCH_OK, so that a
+// proxying relay can forward them. Nil when the publisher sent none.
+func (f *FetchStream) TrackProperties() KVPList {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.properties
 }
 
 // ReadObject returns the next record of the response, blocking until one
@@ -491,6 +500,9 @@ func (f *FetchStream) run() error {
 func (f *FetchStream) handleMessage(msg wire2.ControlMessage) error {
 	switch m := msg.(type) {
 	case *wire2.FetchOk:
+		if err := wire2.ValidateTrackProperties(m.TrackProperties); err != nil {
+			return err
+		}
 		f.mu.Lock()
 		if f.answered {
 			f.mu.Unlock()
@@ -499,6 +511,7 @@ func (f *FetchStream) handleMessage(msg wire2.ControlMessage) error {
 		f.answered = true
 		f.endLocation = m.EndLocation
 		f.endOfTrack = m.EndOfTrack
+		f.properties = m.TrackProperties
 		f.mu.Unlock()
 		f.establishOnce.Do(func() { close(f.established) })
 		f.finishIfComplete()

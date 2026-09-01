@@ -14,14 +14,22 @@ import (
 // logger given to [Session.Qlogger].
 const QlogSchema = moqt.Schema
 
+// QlogHandler receives every qlog event of a session. *qlog.Logger implements
+// it; an application can interpose its own handler to filter events by
+// [qlog.Event.Category] and Name, or fan them out, before anything is
+// serialized.
+type QlogHandler interface {
+	Log(qlog.Event)
+}
+
 // qlogger is the optional event sink, wrapped so that every call site can log
 // unconditionally instead of guarding each one.
 //
 // It is a value, not a pointer: it is copied into every stream and request
-// that logs, and copying a single pointer field is cheaper than reaching back
-// through the session.
+// that logs, and copying a single interface field is cheaper than reaching
+// back through the session.
 type qlogger struct {
-	logger *qlog.Logger
+	logger QlogHandler
 }
 
 func (q qlogger) log(event qlog.Event) {

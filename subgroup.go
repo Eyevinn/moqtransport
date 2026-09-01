@@ -190,6 +190,7 @@ func (s *subgroupReceiver) receive(deliver func(*Object) error) error {
 			Properties:           obj.Properties,
 			Status:               obj.Status,
 			Payload:              obj.Payload,
+			EndOfGroup:           header.EndOfGroup,
 		}); err != nil {
 			return err
 		}
