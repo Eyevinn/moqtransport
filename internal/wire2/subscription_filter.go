@@ -2,6 +2,8 @@ package wire2
 
 import (
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/Eyevinn/locmaf/vi64"
 )
@@ -210,6 +212,23 @@ func (pp Parameters) Forward() (bool, error) {
 		return true, nil
 	}
 	return false, errInvalidBoolValue
+}
+
+// RendezvousTimeout returns the RENDEZVOUS_TIMEOUT parameter (Section 10.2.6)
+// and whether it was present: how long the subscriber is willing to wait for
+// a publisher of a Track that has none yet. Absent, the subscriber wants an
+// immediate answer, which the section spells as a default of 0. The wire
+// carries milliseconds; a value too large for a Duration saturates.
+func (pp Parameters) RendezvousTimeout() (time.Duration, bool) {
+	p, ok := pp.Get(ParamRendezvousTimeout)
+	if !ok {
+		return 0, false
+	}
+	const maxMillis = uint64(math.MaxInt64 / int64(time.Millisecond))
+	if p.Number > maxMillis {
+		return time.Duration(math.MaxInt64), true
+	}
+	return time.Duration(p.Number) * time.Millisecond, true
 }
 
 // LargestObject returns the LARGEST_OBJECT parameter and whether it was

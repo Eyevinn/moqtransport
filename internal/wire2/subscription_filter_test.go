@@ -1,7 +1,9 @@
 package wire2
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/Eyevinn/locmaf/vi64"
 	"github.com/stretchr/testify/assert"
@@ -100,6 +102,21 @@ func TestParameterDefaults(t *testing.T) {
 
 	_, present = empty.LargestObject()
 	assert.False(t, present)
+
+	wait, present := empty.RendezvousTimeout()
+	assert.False(t, present, "absent means the subscriber wants an immediate answer")
+	assert.Zero(t, wait)
+}
+
+func TestRendezvousTimeoutParameter(t *testing.T) {
+	wait, present := Parameters{VarintParameter(ParamRendezvousTimeout, 5000)}.RendezvousTimeout()
+	assert.True(t, present)
+	assert.Equal(t, 5*time.Second, wait)
+
+	// A value past what a Duration can hold saturates rather than wrapping.
+	wait, present = Parameters{VarintParameter(ParamRendezvousTimeout, 1<<62-1)}.RendezvousTimeout()
+	assert.True(t, present)
+	assert.Equal(t, time.Duration(math.MaxInt64), wait)
 }
 
 func TestParameterAccessors(t *testing.T) {

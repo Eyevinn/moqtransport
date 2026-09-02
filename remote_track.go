@@ -492,6 +492,21 @@ func WithForward(forward bool) SubscribeOption {
 	}
 }
 
+// WithRendezvousTimeout asks a relay to hold the SUBSCRIBE for up to d while
+// the Track has no publisher, instead of answering DOES_NOT_EXIST at once
+// (Section 10.2.6). The relay may hold it for less; a wait that runs out is
+// answered with TIMEOUT. The wire carries whole milliseconds.
+func WithRendezvousTimeout(d time.Duration) SubscribeOption {
+	return func(s *wire2.Subscribe) error {
+		if d < 0 {
+			return errNegativeRendezvousTimeout
+		}
+		s.Parameters = append(s.Parameters,
+			wire2.VarintParameter(wire2.ParamRendezvousTimeout, uint64(d/time.Millisecond)))
+		return nil
+	}
+}
+
 // WithFilter asks for part of the Track. Omitted, the subscription is
 // unfiltered.
 func WithFilter(filter SubscriptionFilter) SubscribeOption {
@@ -623,6 +638,7 @@ func (i *remoteTrackIndex) await(ctx context.Context, alias uint64) ([]*RemoteTr
 
 var (
 	errSubscriptionClosedLocally = errors.New("subscription closed by the application")
+	errNegativeRendezvousTimeout = errors.New("rendezvous timeout must not be negative")
 
 	errUnexpectedTrackProperties = ProtocolError{
 		code:    SessionErrorProtocolViolation,
