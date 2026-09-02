@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
 	"github.com/mengelbart/qlog/moqt"
@@ -131,6 +132,15 @@ func (r *SubscribeRequest) Forward() (bool, error) {
 // filter means the subscription is unfiltered.
 func (r *SubscribeRequest) Filter() (SubscriptionFilter, bool, error) {
 	return r.Parameters().Filter()
+}
+
+// RendezvousTimeout is how long the subscriber is willing to wait for a
+// publisher of the Track when there is none yet, and whether it said so
+// (Section 10.2.6). A relay honoring it holds the request up to that long --
+// it may choose less -- and answers TIMEOUT when the wait runs out; without
+// the parameter the subscriber wants an immediate DOES_NOT_EXIST instead.
+func (r *SubscribeRequest) RendezvousTimeout() (time.Duration, bool) {
+	return r.Parameters().RendezvousTimeout()
 }
 
 // Accept answers with SUBSCRIBE_OK and returns the publishing side.

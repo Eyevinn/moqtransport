@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
 	"github.com/stretchr/testify/assert"
@@ -115,6 +116,7 @@ func TestSubscribeRequestAccessors(t *testing.T) {
 		wire2.Uint8Parameter(wire2.ParamSubscriberPriority, 7),
 		wire2.Uint8Parameter(wire2.ParamGroupOrder, uint8(GroupOrderDescending)),
 		wire2.Uint8Parameter(wire2.ParamForward, 0),
+		wire2.VarintParameter(wire2.ParamRendezvousTimeout, 5000),
 		filter,
 	})
 	defer req.cancel(StreamErrorCancelled, errors.New("test over"))
@@ -138,6 +140,10 @@ func TestSubscribeRequestAccessors(t *testing.T) {
 	assert.True(t, present)
 	assert.Equal(t, FilterAbsoluteStart, f.Type)
 	assert.Equal(t, uint64(3), f.StartLocation.Group)
+
+	wait, present := req.RendezvousTimeout()
+	assert.True(t, present)
+	assert.Equal(t, 5*time.Second, wait)
 }
 
 // A request with no parameters at all is the case where the defaults have to
@@ -150,6 +156,21 @@ func TestSubscribeRequestDefaults(t *testing.T) {
 	forward, err := req.Forward()
 	require.NoError(t, err)
 	assert.True(t, forward)
+	wait, present := req.RendezvousTimeout()
+	assert.False(t, present, "no parameter means the subscriber wants an immediate answer")
+	assert.Zero(t, wait)
+}
+
+// WithRendezvousTimeout puts whole milliseconds on the wire and refuses a
+// negative wait.
+func TestWithRendezvousTimeout(t *testing.T) {
+	msg := &wire2.Subscribe{}
+	require.NoError(t, WithRendezvousTimeout(1500*time.Millisecond)(msg))
+	wait, present := msg.Parameters.RendezvousTimeout()
+	assert.True(t, present)
+	assert.Equal(t, 1500*time.Millisecond, wait)
+
+	assert.ErrorIs(t, WithRendezvousTimeout(-time.Second)(&wire2.Subscribe{}), errNegativeRendezvousTimeout)
 }
 
 func TestSubscribeAcceptSendsSubscribeOk(t *testing.T) {
