@@ -64,6 +64,9 @@ func (p *controlStreamPair) open(ctx context.Context, conn Connection, setup *wi
 	if err != nil {
 		return fmt.Errorf("opening control stream: %w", err)
 	}
+	// Section 7.2: control messages are critical and small, so the control
+	// streams are prioritized highest of everything this session sends.
+	setStreamPriority(stream, StreamPriority{Urgency: UrgencyControl})
 
 	buf, err := wire2.AppendControlMessage(nil, setup)
 	if err != nil {

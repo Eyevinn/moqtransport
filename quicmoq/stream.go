@@ -5,7 +5,10 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var _ moqtransport.Stream = (*Stream)(nil)
+var (
+	_ moqtransport.Stream            = (*Stream)(nil)
+	_ moqtransport.PrioritizedStream = (*Stream)(nil)
+)
 
 type Stream struct {
 	stream *quic.Stream
@@ -39,4 +42,15 @@ func (s *Stream) Stop(code uint32) {
 // StreamID implements moqtransport.Stream.
 func (s *Stream) StreamID() uint64 {
 	return uint64(s.stream.StreamID())
+}
+
+// SetPriority implements moqtransport.PrioritizedStream.
+//
+// Bidirectional streams carry requests. draft-ietf-moq-transport-18 Section
+// 7.2 places them below the control streams and above Object data; the
+// control streams themselves are unidirectional since draft-17, so they are
+// SendStreams, not these. Nothing applies a priority to a request stream
+// today: it keeps quic-go's default urgency.
+func (s *Stream) SetPriority(urgency int8, incremental bool) {
+	s.stream.SetPriority(urgency, incremental)
 }
