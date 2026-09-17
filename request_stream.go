@@ -117,6 +117,10 @@ type requestStream struct {
 // session's context, so a session that ends cancels every request it carries.
 func newRequestStream(parent context.Context, stream Stream, logger qlogger) *requestStream {
 	ctx, cancel := context.WithCancelCause(parent)
+	// Section 7.2 places request streams below the control streams and above
+	// Objects. This is the one place every request stream passes through,
+	// whether we opened it or the peer did.
+	setStreamPriority(stream, StreamPriority{Urgency: UrgencyRequest, Incremental: true})
 	return &requestStream{
 		stream:    stream,
 		parser:    wire2.NewControlMessageParser(stream, wire2.ScopeRequest),

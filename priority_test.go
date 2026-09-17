@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// prioritizedStream is a SendStream that can be scheduled, which no released
-// quic-go currently gives us. It stands in for the one that will.
+// prioritizedStream is a SendStream that can be scheduled, standing in for the
+// quicmoq adapter so that the mapping can be tested without a QUIC connection.
 type prioritizedStream struct {
 	SendStream
 	calls []StreamPriority
@@ -35,9 +35,13 @@ func TestDefaultPriorityMapperIsMonotonicInSubscriberPriority(t *testing.T) {
 		previous = got.Urgency
 	}
 
-	// The ends of the range reach the ends of the urgency scale.
-	assert.Equal(t, int8(0), DefaultPriorityMapper.MapPriority(ObjectPriority{SubscriberPriority: 0}).Urgency)
-	assert.Equal(t, int8(7), DefaultPriorityMapper.MapPriority(ObjectPriority{SubscriberPriority: 255}).Urgency)
+	// The ends of the range reach the ends of the Object tier, not the ends of
+	// the urgency scale: the levels above are reserved for control and request
+	// streams.
+	assert.Equal(t, UrgencyObjectHighest,
+		DefaultPriorityMapper.MapPriority(ObjectPriority{SubscriberPriority: 0}).Urgency)
+	assert.Equal(t, UrgencyObjectLowest,
+		DefaultPriorityMapper.MapPriority(ObjectPriority{SubscriberPriority: 255}).Urgency)
 	assert.Equal(t, int8(4), DefaultPriorityMapper.MapPriority(
 		ObjectPriority{SubscriberPriority: DefaultSubscriberPriority}).Urgency)
 }
@@ -80,15 +84,14 @@ func TestPriorityMapperGroupOrder(t *testing.T) {
 // The publisher-priority mapper inverts the trade for the common shape where
 // every subscription shares the default subscriber priority.
 func TestPublisherPriorityMapper(t *testing.T) {
-	assert.Equal(t, int8(0), PublisherPriorityMapper.MapPriority(
+	assert.Equal(t, UrgencyObjectHighest, PublisherPriorityMapper.MapPriority(
 		ObjectPriority{PublisherPriority: 0, SubscriberPriority: 255}).Urgency)
-	assert.Equal(t, int8(7), PublisherPriorityMapper.MapPriority(
+	assert.Equal(t, UrgencyObjectLowest, PublisherPriorityMapper.MapPriority(
 		ObjectPriority{PublisherPriority: 255, SubscriberPriority: 0}).Urgency)
 }
 
-// A transport that cannot schedule is left alone, which is every transport
-// today: no released quic-go carries the call, and webtransport-go exposes
-// none at all.
+// A transport that cannot schedule is left alone, which today means a
+// WebTransport session: webtransport-go exposes no equivalent call.
 func TestApplyPriorityIgnoresAnUnschedulableStream(t *testing.T) {
 	stream, _ := newSendCapture(t)
 	assert.NotPanics(t, func() {
@@ -102,7 +105,7 @@ func TestApplyPriorityUsesTheSessionMapper(t *testing.T) {
 
 	applyPriority(stream, nil, ObjectPriority{SubscriberPriority: 32})
 	require.Len(t, stream.calls, 1)
-	assert.Equal(t, StreamPriority{Urgency: 1}, stream.calls[0], "a nil mapper is the default")
+	assert.Equal(t, StreamPriority{Urgency: UrgencyObjectHighest}, stream.calls[0], "a nil mapper is the default")
 
 	applyPriority(stream, PriorityMapperFunc(func(ObjectPriority) StreamPriority {
 		return StreamPriority{Urgency: 6, Incremental: true}
@@ -183,4 +186,47 @@ func TestSessionPriorityMapperDefault(t *testing.T) {
 		return StreamPriority{Urgency: 5}
 	})
 	assert.Equal(t, int8(5), s.priorityMapper().MapPriority(ObjectPriority{}).Urgency)
+}
+
+// Section 7.2 asks for the control streams highest, then the bidi request
+// streams, then Objects. The tiering only holds if no priority number a mapper
+// is given can lift an Object into the reserved levels, so check the whole
+// range rather than a sample.
+func TestObjectUrgencyNeverOutranksControlOrRequests(t *testing.T) {
+	require.Less(t, UrgencyControl, UrgencyRequest, "control outranks requests")
+	require.Less(t, UrgencyRequest, UrgencyObjectHighest, "requests outrank Objects")
+	require.Less(t, UrgencyObjectLowest, UrgencyPadding, "Objects outrank padding")
+
+	for _, mapper := range []PriorityMapper{DefaultPriorityMapper, PublisherPriorityMapper} {
+		for priority := 0; priority < 256; priority++ {
+			for _, p := range []ObjectPriority{
+				{SubscriberPriority: uint8(priority)},
+				{PublisherPriority: uint8(priority)},
+				{SubscriberPriority: uint8(priority), PublisherPriority: uint8(priority)},
+			} {
+				got := mapper.MapPriority(p).Urgency
+				assert.GreaterOrEqual(t, got, UrgencyObjectHighest, "priority %d", priority)
+				assert.LessOrEqual(t, got, UrgencyObjectLowest, "priority %d", priority)
+			}
+		}
+	}
+}
+
+// The control streams and the request streams take their tier directly, since
+// no MOQT priority number applies to them.
+func TestSetStreamPriorityAppliesAFixedTier(t *testing.T) {
+	plain, _ := newSendCapture(t)
+	stream := &prioritizedStream{SendStream: plain}
+
+	setStreamPriority(stream, StreamPriority{Urgency: UrgencyControl})
+	setStreamPriority(stream, StreamPriority{Urgency: UrgencyRequest, Incremental: true})
+
+	require.Len(t, stream.calls, 2)
+	assert.Equal(t, StreamPriority{Urgency: UrgencyControl}, stream.calls[0])
+	assert.Equal(t, StreamPriority{Urgency: UrgencyRequest, Incremental: true}, stream.calls[1])
+
+	// A transport that cannot schedule is left alone, as with applyPriority.
+	assert.NotPanics(t, func() {
+		setStreamPriority(plain, StreamPriority{Urgency: UrgencyControl})
+	})
 }

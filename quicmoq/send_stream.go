@@ -5,7 +5,10 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var _ moqtransport.SendStream = (*SendStream)(nil)
+var (
+	_ moqtransport.SendStream        = (*SendStream)(nil)
+	_ moqtransport.PrioritizedStream = (*SendStream)(nil)
+)
 
 type SendStream struct {
 	stream *quic.SendStream
@@ -29,4 +32,12 @@ func (s *SendStream) Close() error {
 // StreamID implements moqtransport.SendStream
 func (s *SendStream) StreamID() uint64 {
 	return uint64(s.stream.StreamID())
+}
+
+// SetPriority implements moqtransport.PrioritizedStream.
+//
+// quic-go schedules streams by RFC 9218's urgency and incremental parameters,
+// which is what a moqtransport.PriorityMapper reduces a MOQT priority to.
+func (s *SendStream) SetPriority(urgency int8, incremental bool) {
+	s.stream.SetPriority(urgency, incremental)
 }
