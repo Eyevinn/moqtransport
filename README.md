@@ -14,8 +14,8 @@ Drafts 14 and 16 are **not** supported. draft-17 changed the varint encoding, mo
 
 ## Status
 
-The draft-18 rewrite is on the `draft-18` branch. The session and every request
-type are implemented and tested end to end over an in-process transport:
+The session and every request type are implemented and tested end to end over
+an in-process transport:
 
 - the `vi64` wire format, the message codecs and their generator
 - the Message Parameter, Setup Option and Property registries, and subscription
@@ -28,6 +28,12 @@ type are implemented and tested end to end over an in-process transport:
 Every request type is logged to qlog when a `Session.Qlogger` is set: control
 messages both ways, data stream types, Objects on subgroup and fetch streams,
 and datagrams.
+
+Streams are scheduled as Section 7.2 asks over native QUIC (quic-go v0.62.0 and
+later): the control streams first, then the request streams, then Objects,
+which a replaceable `Session.PriorityMapper` orders by their priorities.
+WebTransport sessions are not scheduled, as webtransport-go exposes no stream
+priority.
 
 Not yet done: incoming PUBLISH and SUBSCRIBE_TRACKS, which are answered with
 `NOT_SUPPORTED`, and GOAWAY-driven session migration, which is read and
@@ -107,7 +113,7 @@ group numbers proving there is no gap and no duplicate at the join point.
 
 ## Requirements
 
-Go 1.25 or later. Dependencies are managed with Go modules.
+Go 1.26 or later. Dependencies are managed with Go modules.
 
 ## Origin
 
