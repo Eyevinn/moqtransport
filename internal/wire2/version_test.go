@@ -11,6 +11,7 @@ import (
 func TestVersionALPN(t *testing.T) {
 	assert.Equal(t, "moqt-18", Version18.ALPN())
 	assert.Equal(t, "moqt-18", Version18.String())
+	assert.Equal(t, "moqt-22", Version22.ALPN())
 }
 
 func TestSupportedALPNs(t *testing.T) {
@@ -18,14 +19,21 @@ func TestSupportedALPNs(t *testing.T) {
 	assert.Equal(t, []string{"moqt-18"}, SupportedALPNs())
 }
 
+func TestVersionAtLeast(t *testing.T) {
+	assert.True(t, Version22.AtLeast(Version22))
+	assert.True(t, Version22.AtLeast(Version18))
+	assert.False(t, Version18.AtLeast(Version22))
+}
+
 func TestVersionFromALPN(t *testing.T) {
 	v, ok := VersionFromALPN("moqt-18")
 	require.True(t, ok)
 	assert.Equal(t, Version18, v)
 
+
 	// Drafts we deliberately do not speak, and nonsense, are both rejected:
 	// with no version field in SETUP there is no in-band way to recover.
-	for _, alpn := range []string{"moqt-16", "moqt-20", "moq-00", "h3", ""} {
+	for _, alpn := range []string{"moqt-16", "moqt-20", "moqt-21", "moq-00", "h3", ""} {
 		_, ok := VersionFromALPN(alpn)
 		assert.False(t, ok, "%q should not resolve", alpn)
 	}
@@ -60,10 +68,10 @@ func TestSetupOptionsRoundTrip(t *testing.T) {
 		MaxAuthTokenCacheSizeOption(1024),
 		ImplementationOption("impl/1.0"),
 	}}
-	buf, err := AppendControlMessage(nil, setup)
+	buf, err := AppendControlMessage(nil, setup, Version18)
 	require.NoError(t, err)
 
-	got, err := NewControlMessageParser(bytes.NewReader(buf), ScopeControl).Parse()
+	got, err := NewControlMessageParser(bytes.NewReader(buf), ScopeControl, Version18).Parse()
 	require.NoError(t, err)
 	assert.Equal(t, setup, got)
 }

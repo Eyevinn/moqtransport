@@ -159,7 +159,7 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.conn = conn
 	s.version = version
 	s.qlog = qlogger{logger: s.Qlogger}
-	s.control = newControlStreamPair(s.qlog)
+	s.control = newControlStreamPair(s.qlog, version)
 	s.requestIDs = newRequestIDGenerator(conn.Perspective())
 	s.peerIDs = newPeerRequestIDs(conn.Perspective())
 	s.remote = newRemoteTrackIndex()
@@ -313,7 +313,7 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream, s.qlog)
+	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	rt := newRemoteTrack(s.ctx, rs, s, msg.RequestID, namespace, track)
 
 	// The reader starts before the request goes out: the publisher may answer
@@ -513,7 +513,7 @@ func (s *Session) dispatchUniStream(u pendingUniStream) {
 }
 
 func (s *Session) adoptControlStream(stream ReceiveStream, reader *bufio.Reader) {
-	parser := wire2.NewControlMessageParserFromReader(reader, wire2.ScopeControl)
+	parser := wire2.NewControlMessageParserFromReader(reader, wire2.ScopeControl, s.version)
 	if err := s.control.adoptRemote(stream, parser); err != nil {
 		s.fail(err)
 	}
@@ -539,7 +539,7 @@ func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reade
 		return
 	}
 
-	receiver := newSubgroupReceiver(stream, header, reader, tracks[0].defaultPriority(), s.qlog)
+	receiver := newSubgroupReceiver(stream, header, reader, tracks[0].defaultPriority(), s.qlog, s.version)
 	err = receiver.receive(func(o *Object) error {
 		for _, t := range tracks {
 			if err := t.deliver(s.ctx, o); err != nil {
@@ -583,7 +583,7 @@ func (s *Session) acceptBidiStreams() {
 }
 
 func (s *Session) handleBidiStream(stream Stream) {
-	rs := newRequestStream(s.ctx, stream, s.qlog)
+	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	msg, err := rs.readRequest()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -706,7 +706,7 @@ func (s *Session) receiveDatagrams() {
 		if err != nil {
 			return
 		}
-		datagram, err := wire2.ParseObjectDatagram(data)
+		datagram, err := wire2.ParseObjectDatagram(data, s.version)
 		if err != nil {
 			s.fail(err)
 			return

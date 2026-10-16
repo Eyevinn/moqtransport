@@ -89,6 +89,7 @@ func (p *streamPipe) close(err error) {
 // and STOP_SENDING codes it emitted and whether it FINed.
 type requestStreamPeer struct {
 	incoming *streamPipe
+	version  wire2.Version
 
 	mu     sync.Mutex
 	buf    bytes.Buffer
@@ -99,9 +100,16 @@ type requestStreamPeer struct {
 
 func newRequestStreamPeer(t *testing.T, parent context.Context) (*requestStream, *requestStreamPeer) {
 	t.Helper()
+	return newRequestStreamPeerVersion(t, parent, wire2.Version18)
+}
+
+// newRequestStreamPeerVersion is newRequestStreamPeer on a session speaking
+// version.
+func newRequestStreamPeerVersion(t *testing.T, parent context.Context, version wire2.Version) (*requestStream, *requestStreamPeer) {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	stream := NewMockStream(ctrl)
-	p := &requestStreamPeer{incoming: newStreamPipe()}
+	p := &requestStreamPeer{incoming: newStreamPipe(), version: version}
 
 	stream.EXPECT().Read(gomock.Any()).DoAndReturn(p.incoming.Read).AnyTimes()
 	stream.EXPECT().Write(gomock.Any()).DoAndReturn(func(b []byte) (int, error) {
@@ -134,15 +142,15 @@ func newRequestStreamPeer(t *testing.T, parent context.Context) (*requestStream,
 	// goleak would have nothing to report because the goroutine never ends.
 	t.Cleanup(func() { p.incoming.close(io.EOF) })
 
-	return newRequestStream(parent, stream, qlogger{}), p
+	return newRequestStream(parent, stream, qlogger{}, version), p
 }
 
 var errStreamReaderStopped = errors.New("stream reader stopped")
 
 // send frames msg and hands it to the request stream's reader.
-func (p *requestStreamPeer) send(t *testing.T, msg wire2.MessageV18) {
+func (p *requestStreamPeer) send(t *testing.T, msg wire2.ControlMessage) {
 	t.Helper()
-	buf, err := wire2.AppendControlMessage(nil, msg)
+	buf, err := wire2.AppendControlMessage(nil, msg, p.version)
 	require.NoError(t, err)
 	_, err = p.incoming.Write(buf)
 	require.NoError(t, err)
@@ -161,7 +169,7 @@ func (p *requestStreamPeer) sent(t *testing.T) []wire2.ControlMessage {
 	raw := bytes.Clone(p.buf.Bytes())
 	p.mu.Unlock()
 
-	parser := wire2.NewControlMessageParser(bytes.NewReader(raw), wire2.ScopeRequest)
+	parser := wire2.NewControlMessageParser(bytes.NewReader(raw), wire2.ScopeRequest, p.version)
 	var msgs []wire2.ControlMessage
 	for {
 		msg, err := parser.Parse()
@@ -234,13 +242,13 @@ func TestRequestStreamRunEndsOnPeerFIN(t *testing.T) {
 	}()
 
 	peer.send(t, &wire2.RequestUpdate{RequestID: 4})
-	peer.send(t, &wire2.PublishBlocked{TrackNamespaceSuffix: [][]byte{[]byte("ns")}, TrackName: []byte("v0")})
+	peer.send(t, &wire2.PublishSkipped{TrackNamespaceSuffix: [][]byte{[]byte("ns")}, TrackName: []byte("v0")})
 	peer.fin()
 
 	require.NoError(t, <-done)
 	require.Len(t, got, 2)
 	assert.Equal(t, wire2.ControlMessageTypeRequestUpdate, got[0].Type())
-	assert.Equal(t, wire2.ControlMessageTypePublishBlocked, got[1].Type())
+	assert.Equal(t, wire2.ControlMessageTypePublishSkipped, got[1].Type())
 
 	<-rs.Context().Done()
 	assert.ErrorIs(t, context.Cause(rs.Context()), errPeerFinishedRequest)

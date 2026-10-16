@@ -32,13 +32,19 @@ type (
 	// Parameter is one Message Parameter.
 	Parameter = wire2.Parameter
 
-	// SubscriptionFilter selects which Objects of a Track a subscription
-	// delivers.
-	SubscriptionFilter = wire2.SubscriptionFilter
+	// LocationFilter selects which Objects of a Track a subscription
+	// delivers, or which a FETCH or a fill retrieves. Build one with
+	// [NextGroup], [RelativeStart], [NextObject], [AbsoluteStart] or
+	// [AbsoluteRange]; the zero value is no filter at all.
+	LocationFilter = wire2.LocationFilter
 
-	// FilterType is a Subscription Filter's type, which also decides which of
-	// the filter's fields are present.
-	FilterType = wire2.FilterType
+	// LocationFilterType is a location filter's type, which also decides
+	// which of its fields are present.
+	LocationFilterType = wire2.LocationFilterType
+
+	// LocationRange is a location filter resolved against a Largest Object:
+	// Start to End inclusive, or open ended.
+	LocationRange = wire2.LocationRange
 )
 
 const (
@@ -55,18 +61,27 @@ const (
 	// GroupOrderDescending delivers Groups in decreasing Group ID order.
 	GroupOrderDescending = wire2.GroupOrderDescending
 
-	// FilterNextGroupStart starts at the beginning of the next Group and is
-	// open ended.
-	FilterNextGroupStart = wire2.FilterNextGroupStart
-	// FilterLargestObject starts just past the largest Object the publisher
-	// has and is open ended. A Joining FETCH requires this filter of the
-	// subscription it joins.
-	FilterLargestObject = wire2.FilterLargestObject
-	// FilterAbsoluteStart starts at an explicit Location and is open ended.
-	FilterAbsoluteStart = wire2.FilterAbsoluteStart
-	// FilterAbsoluteRange starts at an explicit Location and ends at a Group
-	// derived from it.
-	FilterAbsoluteRange = wire2.FilterAbsoluteRange
+	// LocationFilterNone admits every Location.
+	LocationFilterNone = wire2.LocationFilterNone
+	// LocationFilterRelativeStart starts a number of Groups before the Next
+	// Group and is open ended.
+	LocationFilterRelativeStart = wire2.LocationFilterRelativeStart
+	// LocationFilterAbsoluteStart starts at an explicit Location and is open
+	// ended.
+	LocationFilterAbsoluteStart = wire2.LocationFilterAbsoluteStart
+	// LocationFilterAbsoluteGroupEnd starts at an explicit Location and ends
+	// with the last Object of a Group.
+	LocationFilterAbsoluteGroupEnd = wire2.LocationFilterAbsoluteGroupEnd
+	// LocationFilterAbsoluteRange starts at an explicit Location and ends at
+	// another, inclusive.
+	LocationFilterAbsoluteRange = wire2.LocationFilterAbsoluteRange
+	// LocationFilterNextObject starts just past the publisher's Largest
+	// Object and is open ended.
+	LocationFilterNextObject = wire2.LocationFilterNextObject
+
+	// MaxObjectID is the largest Object ID. An inclusive end Location with
+	// it covers the rest of its Group.
+	MaxObjectID = wire2.MaxObjectID
 
 	// DefaultSubscriberPriority is what applies when SUBSCRIBER_PRIORITY is
 	// omitted.

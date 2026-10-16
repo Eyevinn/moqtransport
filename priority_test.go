@@ -117,8 +117,7 @@ func TestApplyPriorityUsesTheSessionMapper(t *testing.T) {
 // The whole key reaches the mapper when a subgroup is opened, which is the
 // only place all four terms are known at once.
 func TestOpenSubgroupPassesTheWholeKey(t *testing.T) {
-	filter, err := wire2.SubscriptionFilterParameter(wire2.SubscriptionFilter{Type: wire2.FilterLargestObject})
-	require.NoError(t, err)
+	filter := wire2.LocationFilterParameter(NextObject())
 
 	req, _, session := newIncomingSubscribe(t, wire2.Parameters{
 		wire2.Uint8Parameter(wire2.ParamSubscriberPriority, 40),

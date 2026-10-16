@@ -170,7 +170,7 @@ func (r *FetchRequest) Accept(opts ...FetchOkOption) (*FetchResponse, error) {
 	r.qlog.logStreamType(moqt.OwnerLocal, stream, moqt.StreamTypeFetchHeader)
 	return &FetchResponse{
 		stream: stream,
-		writer: wire2.NewFetchWriter(r.order),
+		writer: wire2.NewFetchWriter(r.order, r.version),
 		qlog:   r.qlog,
 	}, nil
 }
@@ -558,13 +558,11 @@ func WithFetchGroupOrder(order GroupOrder) FetchOption {
 // Object is 0 asks for the whole of that Group.
 func (s *Session) Fetch(ctx context.Context, namespace []string, track string, start, end Location, opts ...FetchOption) (*FetchStream, error) {
 	return s.fetch(ctx, &wire2.Fetch{
-		FetchType: wire2.FetchTypeStandalone,
-		Standalone: &wire2.StandaloneFetch{
-			TrackNamespace: namespaceFields(namespace),
-			TrackName:      []byte(track),
-			StartLocation:  start,
-			EndLocation:    end,
-		},
+		FetchType:      wire2.FetchTypeStandalone,
+		TrackNamespace: namespaceFields(namespace),
+		TrackName:      []byte(track),
+		StartLocation:  start,
+		EndLocation:    end,
 	}, opts...)
 }
 
@@ -616,7 +614,7 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 	if err != nil {
 		return nil, err
 	}
-	rs := newRequestStream(s.ctx, stream, s.qlog)
+	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	fetch := &FetchStream{
 		requestStream: rs,
 		session:       s,
@@ -676,10 +674,10 @@ func newFetchRequest(rs *requestStream, session fetchSession, msg *wire2.Fetch) 
 	}
 
 	if msg.FetchType == wire2.FetchTypeStandalone {
-		req.namespace = namespaceStrings(msg.Standalone.TrackNamespace)
-		req.track = string(msg.Standalone.TrackName)
-		req.start = msg.Standalone.StartLocation
-		req.end = msg.Standalone.EndLocation
+		req.namespace = namespaceStrings(msg.TrackNamespace)
+		req.track = string(msg.TrackName)
+		req.start = msg.StartLocation
+		req.end = msg.EndLocation
 		return req, nil
 	}
 	return req, resolveJoiningFetch(req, session, msg)
@@ -761,7 +759,7 @@ func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) 
 		return
 	}
 
-	objects := wire2.NewFetchReader(reader, fetch.GroupOrder())
+	objects := wire2.NewFetchReader(reader, fetch.GroupOrder(), s.version)
 	for {
 		record, err := objects.Next()
 		if err != nil {

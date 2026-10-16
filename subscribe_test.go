@@ -106,11 +106,7 @@ func newIncomingSubscribe(t *testing.T, params wire2.Parameters) (*SubscribeRequ
 }
 
 func TestSubscribeRequestAccessors(t *testing.T) {
-	filter, err := wire2.SubscriptionFilterParameter(wire2.SubscriptionFilter{
-		Type:          wire2.FilterAbsoluteStart,
-		StartLocation: wire2.Location{Group: 3, Object: 1},
-	})
-	require.NoError(t, err)
+	filter := wire2.LocationFilterParameter(AbsoluteStart(Location{Group: 3, Object: 1}))
 
 	req, _, _ := newIncomingSubscribe(t, wire2.Parameters{
 		wire2.Uint8Parameter(wire2.ParamSubscriberPriority, 7),
@@ -135,11 +131,10 @@ func TestSubscribeRequestAccessors(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, forward)
 
-	f, present, err := req.Filter()
-	require.NoError(t, err)
+	f, present := req.Filter()
 	assert.True(t, present)
-	assert.Equal(t, FilterAbsoluteStart, f.Type)
-	assert.Equal(t, uint64(3), f.StartLocation.Group)
+	assert.Equal(t, LocationFilterAbsoluteStart, f.Type)
+	assert.Equal(t, uint64(3), f.Start.Group)
 
 	wait, present := req.RendezvousTimeout()
 	assert.True(t, present)
@@ -297,7 +292,7 @@ func TestSubscriptionSendDatagram(t *testing.T) {
 	}))
 
 	require.Len(t, session.datagrams, 1)
-	d, err := wire2.ParseObjectDatagram(session.datagrams[0])
+	d, err := wire2.ParseObjectDatagram(session.datagrams[0], wire2.Version18)
 	require.NoError(t, err)
 	assert.Equal(t, sub.TrackAlias(), d.TrackAlias)
 	assert.Equal(t, uint64(4), d.GroupID)
@@ -349,12 +344,7 @@ func TestSubscriptionUpdate(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- req.run(req.handleMessage) }()
 
-	filter, err := wire2.SubscriptionFilterParameter(wire2.SubscriptionFilter{
-		Type:          wire2.FilterAbsoluteRange,
-		StartLocation: wire2.Location{Group: 2},
-		EndGroupDelta: 5,
-	})
-	require.NoError(t, err)
+	filter := wire2.LocationFilterParameter(AbsoluteRange(Location{Group: 2}, Location{Group: 7, Object: MaxObjectID}))
 	peer.send(t, &wire2.RequestUpdate{
 		RequestID: 2,
 		Parameters: wire2.Parameters{
@@ -366,7 +356,7 @@ func TestSubscriptionUpdate(t *testing.T) {
 	got := <-updates
 	assert.False(t, got.Forward)
 	assert.True(t, got.HasFilter)
-	assert.Equal(t, FilterAbsoluteRange, got.Filter.Type)
+	assert.Equal(t, LocationFilterAbsoluteGroupEnd, got.Filter.Type)
 	// A parameter the update does not mention keeps its value.
 	assert.Equal(t, uint8(10), got.SubscriberPriority)
 
@@ -398,11 +388,11 @@ func TestSubscriptionUpdateFailureEndsSubscription(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- req.run(req.handleMessage) }()
 
-	// A filter naming a type the draft does not define.
+	// A FORWARD value the draft does not define.
 	peer.send(t, &wire2.RequestUpdate{
 		RequestID: 2,
 		Parameters: wire2.Parameters{
-			wire2.BytesParameter(wire2.ParamSubscriptionFilter, []byte{0x7}),
+			wire2.Uint8Parameter(wire2.ParamForward, 7),
 		},
 	})
 

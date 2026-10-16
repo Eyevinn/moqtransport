@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +34,19 @@ type allTags struct {
 type noFields struct {
 	Ignored string
 }
+
+// In drafts 18 and 22, with a field only draft 18 has.
+//
+//wiregen:drafts 18,22
+type perDraft struct {
+	RequestID uint64 ` + "`proto:\"varint\" drafts:\"18\"`" + `
+	Timeout   uint64 ` + "`proto:\"varint\"`" + `
+}
+
+//wiregen:drafts 22
+type onlyIn22 struct {
+	Parameters Parameters ` + "`proto:\"moq_params\"`" + `
+}
 `
 
 func declFor(t *testing.T, name string) messageDecl {
@@ -54,14 +68,17 @@ func TestGenerateGolden(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		message string
-		suffix  string
+		draft   int
 	}{
-		{"all_tags_v18", "allTags", "V18"},
-		{"all_tags_v20", "allTags", "V20"},
-		{"no_fields_v18", "noFields", "V18"},
+		{"all_tags_v18", "allTags", 18},
+		{"all_tags_v22", "allTags", 22},
+		{"no_fields_v18", "noFields", 18},
+		{"per_draft_v18", "perDraft", 18},
+		{"per_draft_v22", "perDraft", 22},
+		{"only_in_22_v22", "onlyIn22", 22},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := generate(declFor(t, tc.message), "wire2", tc.suffix, "-draft 18")
+			got, err := generate(declFor(t, tc.message), "wire2", tc.draft, fmt.Sprintf("-draft %d", tc.draft))
 			if err != nil {
 				t.Fatalf("generate: %v", err)
 			}
@@ -91,8 +108,8 @@ func TestParseDeclarations(t *testing.T) {
 	if pkg != "wire2" {
 		t.Errorf("package = %q, want wire2", pkg)
 	}
-	if len(msgs) != 2 || msgs[0].name != "allTags" || msgs[1].name != "noFields" {
-		t.Fatalf("got %d messages, want allTags then noFields", len(msgs))
+	if len(msgs) != 4 || msgs[0].name != "allTags" || msgs[1].name != "noFields" {
+		t.Fatalf("got %d messages, want allTags, noFields, perDraft, onlyIn22", len(msgs))
 	}
 
 	// Declaration order must survive, since it is the wire order.
@@ -179,14 +196,64 @@ type bad struct {
 	if err != nil {
 		t.Fatalf("parseDecls: %v", err)
 	}
-	if _, err := generate(msgs[0], "wire2", "V18", ""); err == nil {
+	if _, err := generate(msgs[0], "wire2", 18, ""); err == nil {
 		t.Fatal("expected an error for an unknown proto tag")
 	}
 }
 
 func TestGenerateRejectsEmptyPackage(t *testing.T) {
-	if _, err := generate(declFor(t, "noFields"), "", "V18", ""); err == nil {
+	if _, err := generate(declFor(t, "noFields"), "", 18, ""); err == nil {
 		t.Fatal("expected an error for an empty package name")
+	}
+}
+
+// A message limited to some drafts gets no codec in the others, and the
+// directive has to survive both comment placements go/parser produces.
+func TestDraftsDirective(t *testing.T) {
+	only := declFor(t, "onlyIn22")
+	if only.inDraft(18) || !only.inDraft(22) {
+		t.Errorf("onlyIn22 drafts = %v, want [22]", only.drafts)
+	}
+	if !declFor(t, "allTags").inDraft(18) || !declFor(t, "allTags").inDraft(99) {
+		t.Error("a message without the directive belongs to every draft")
+	}
+	if _, err := generate(only, "wire2", 18, ""); err == nil {
+		t.Error("expected an error generating a message outside its drafts")
+	}
+
+	src := `package wire2
+
+type (
+	//wiregen:drafts 20
+	grouped struct {
+		X uint64 ` + "`proto:\"varint\"`" + `
+	}
+)
+`
+	_, msgs, err := parseDecls("decl.go", src)
+	if err != nil {
+		t.Fatalf("parseDecls: %v", err)
+	}
+	if !msgs[0].inDraft(20) || msgs[0].inDraft(18) {
+		t.Errorf("grouped drafts = %v, want [20]", msgs[0].drafts)
+	}
+}
+
+func TestWireFieldsPerDraft(t *testing.T) {
+	m := declFor(t, "perDraft")
+	for draft, want := range map[int]int{18: 2, 22: 1} {
+		fields, err := m.wireFields(draft)
+		if err != nil {
+			t.Fatalf("wireFields(%d): %v", draft, err)
+		}
+		if len(fields) != want {
+			t.Errorf("draft %d: %d wire fields, want %d", draft, len(fields), want)
+		}
+	}
+
+	bad := messageDecl{name: "bad", fields: []fieldDecl{{name: "X", tag: `proto:"varint" drafts:"x"`}}}
+	if _, err := bad.wireFields(18); err == nil {
+		t.Error("expected an error for a malformed drafts tag")
 	}
 }
 

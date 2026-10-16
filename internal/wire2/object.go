@@ -58,12 +58,13 @@ type byteReader interface {
 }
 
 // readProperties reads an Object Properties block: a byte length followed by
-// that many bytes of Key-Value-Pairs (Section 11.2.1.2).
+// that many bytes of Key-Value-Pairs (Section 11.2.1.2), and checks their
+// scope as version defines it.
 //
 // Unknown Property types are not an error. Properties are relay-visible and
 // forwarded unchanged, so a parser that rejected what it did not recognise
 // would break the forwarding model; only scope violations are rejected.
-func readProperties(r byteReader) (KVPList, error) {
+func readProperties(r byteReader, version Version) (KVPList, error) {
 	length, err := vi64.Read(r)
 	if err != nil {
 		return nil, unexpectedEOF(err)
@@ -79,7 +80,7 @@ func readProperties(r byteReader) (KVPList, error) {
 	if _, err := pp.parseAll(body); err != nil {
 		return nil, err
 	}
-	if err := ValidateObjectProperties(pp); err != nil {
+	if err := ValidateObjectProperties(pp, version); err != nil {
 		return nil, err
 	}
 	return pp, nil

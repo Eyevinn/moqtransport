@@ -210,7 +210,7 @@ func TestQlogRendersEveryMessage(t *testing.T) {
 		&wire2.PublishDone{StatusCode: 2, StreamCount: 5, ErrorReason: "done"},
 		&wire2.FetchOk{EndOfTrack: true, EndLocation: wire2.Location{Group: 7, Object: 2}},
 		&wire2.Namespace{TrackNamespaceSuffix: [][]byte{[]byte("room=1")}},
-		&wire2.PublishBlocked{TrackNamespaceSuffix: [][]byte{[]byte("ns")}, TrackName: []byte("v0")},
+		&wire2.PublishSkipped{TrackNamespaceSuffix: [][]byte{[]byte("ns")}, TrackName: []byte("v0")},
 	}
 
 	for _, msg := range messages {

@@ -128,10 +128,21 @@ func (r *SubscribeRequest) Forward() (bool, error) {
 	return r.Parameters().Forward()
 }
 
-// Filter returns the Subscription Filter, and whether one was sent. An absent
-// filter means the subscription is unfiltered.
-func (r *SubscribeRequest) Filter() (SubscriptionFilter, bool, error) {
-	return r.Parameters().Filter()
+// Filter returns the location filter, and whether one was sent. An absent
+// filter means the subscription is unfiltered, and so does
+// LocationFilterNone; both report false here.
+func (r *SubscribeRequest) Filter() (LocationFilter, bool) {
+	return activeFilter(r.Parameters().LocationFilter())
+}
+
+// activeFilter treats an explicit LocationFilterNone like an absent filter.
+// Draft-22 can say "no filter" on the wire, which in a REQUEST_UPDATE is how a
+// filter is removed; a subscription with no filter is the same either way.
+func activeFilter(f LocationFilter, present bool) (LocationFilter, bool) {
+	if !present || f.Type == LocationFilterNone {
+		return LocationFilter{}, false
+	}
+	return f, true
 }
 
 // RendezvousTimeout is how long the subscriber is willing to wait for a
@@ -173,10 +184,7 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		// Ascending, which is also the DEFAULT_PUBLISHER_GROUP_ORDER default.
 		groupOrder = GroupOrderAscending
 	}
-	filter, hasFilter, err := params.Filter()
-	if err != nil {
-		return nil, err
-	}
+	filter, hasFilter := activeFilter(params.LocationFilter())
 
 	ok := &wire2.SubscribeOk{
 		TrackAlias: r.session.trackAlias(r.namespace, r.track),
@@ -326,7 +334,7 @@ type Subscription struct {
 	priority    uint8
 	groupOrder  GroupOrder
 	forward     bool
-	filter      wire2.SubscriptionFilter
+	filter      LocationFilter
 	hasFilter   bool
 	streamCount uint64
 	closed      bool
@@ -357,7 +365,7 @@ type SubscriptionUpdate struct {
 	// not only the ones the update changed.
 	SubscriberPriority uint8
 	Forward            bool
-	Filter             SubscriptionFilter
+	Filter             LocationFilter
 	HasFilter          bool
 
 	// Parameters is the update's own parameter block, for anything this
@@ -402,9 +410,9 @@ func (s *Subscription) Forward() bool {
 // cannot change once the subscription is established.
 func (s *Subscription) GroupOrder() GroupOrder { return s.groupOrder }
 
-// Filter returns the Subscription Filter currently in effect, and whether
-// there is one.
-func (s *Subscription) Filter() (SubscriptionFilter, bool) {
+// Filter returns the location filter currently in effect, and whether there
+// is one.
+func (s *Subscription) Filter() (LocationFilter, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.filter, s.hasFilter
@@ -588,11 +596,11 @@ func (s *Subscription) mergeUpdate(update *wire2.RequestUpdate) (SubscriptionUpd
 		}
 		forward = v
 	}
+	// An update without a filter leaves it alone; draft-22's explicit None
+	// removes it.
 	filter, hasFilter := s.filter, s.hasFilter
-	if f, present, err := update.Parameters.Filter(); err != nil {
-		return SubscriptionUpdate{}, err
-	} else if present {
-		filter, hasFilter = f, true
+	if f, present := update.Parameters.LocationFilter(); present {
+		filter, hasFilter = activeFilter(f, true)
 	}
 
 	s.priority = priority

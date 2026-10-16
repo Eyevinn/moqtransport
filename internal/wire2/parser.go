@@ -8,15 +8,17 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-// ControlMessageParser reads length-framed control messages from one stream.
+// ControlMessageParser reads length-framed control messages from one stream,
+// decoding them in one draft's encoding.
 type ControlMessageParser struct {
-	reader *bufio.Reader
-	scope  StreamScope
+	reader  *bufio.Reader
+	scope   StreamScope
+	version Version
 }
 
 // NewControlMessageParser returns a parser reading messages of scope from r.
-func NewControlMessageParser(r io.Reader, scope StreamScope) *ControlMessageParser {
-	return NewControlMessageParserFromReader(bufio.NewReader(r), scope)
+func NewControlMessageParser(r io.Reader, scope StreamScope, version Version) *ControlMessageParser {
+	return NewControlMessageParserFromReader(bufio.NewReader(r), scope, version)
 }
 
 // NewControlMessageParserFromReader returns a parser reading from an existing
@@ -25,8 +27,8 @@ func NewControlMessageParser(r io.Reader, scope StreamScope) *ControlMessagePars
 // A caller that has already sniffed the stream type needs this: wrapping the
 // stream a second time would leave the bytes the first reader buffered
 // stranded in it.
-func NewControlMessageParserFromReader(r *bufio.Reader, scope StreamScope) *ControlMessageParser {
-	return &ControlMessageParser{reader: r, scope: scope}
+func NewControlMessageParserFromReader(r *bufio.Reader, scope StreamScope, version Version) *ControlMessageParser {
+	return &ControlMessageParser{reader: r, scope: scope, version: version}
 }
 
 // Reader returns the buffered reader the parser reads from, so a caller that
@@ -75,11 +77,11 @@ func (p *ControlMessageParser) ParseBody(messageType ControlMessageType) (Contro
 		return nil, unexpectedEOF(err)
 	}
 
-	msg, err := newControlMessage(p.scope, messageType)
+	msg, err := newControlMessage(p.scope, messageType, p.version)
 	if err != nil {
 		return nil, err
 	}
-	if err := msg.parseV18(body); err != nil {
+	if err := parseBody(msg, body, p.version); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -94,10 +96,14 @@ func unexpectedEOF(err error) error {
 	return err
 }
 
-// newControlMessage returns an empty message of the type t names within scope.
-// An unknown type is an error: draft-18 requires the session to be closed,
-// because no control message is intended to be ignorable.
-func newControlMessage(scope StreamScope, t ControlMessageType) (MessageV18, error) {
+// newControlMessage returns an empty message of the type t names within scope
+// in version. An unknown type is an error: both drafts require the session to
+// be closed, because no control message is intended to be ignorable.
+//
+// The two drafts' tables differ in two entries: 0x1E is PUBLISH_OK in
+// draft-18 and reserved from draft-19, and 0x22 is PUBLISH_STATE_NOTIFY from
+// draft-20.
+func newControlMessage(scope StreamScope, t ControlMessageType, version Version) (ControlMessage, error) {
 	if scope == ScopeControl {
 		switch t {
 		case ControlMessageTypeSetup:
@@ -121,9 +127,15 @@ func newControlMessage(scope StreamScope, t ControlMessageType) (MessageV18, err
 	case ControlMessageTypePublish:
 		return &Publish{}, nil
 	case ControlMessageTypePublishOk:
-		return &PublishOk{}, nil
+		if version == Version18 {
+			return &PublishOk{}, nil
+		}
 	case ControlMessageTypePublishDone:
 		return &PublishDone{}, nil
+	case ControlMessageTypePublishStateNotify:
+		if version.AtLeast(Version22) {
+			return &PublishStateNotify{}, nil
+		}
 	case ControlMessageTypeFetch:
 		return &Fetch{}, nil
 	case ControlMessageTypeFetchOk:
@@ -140,8 +152,8 @@ func newControlMessage(scope StreamScope, t ControlMessageType) (MessageV18, err
 		return &Namespace{}, nil
 	case ControlMessageTypeNamespaceDone:
 		return &NamespaceDone{}, nil
-	case ControlMessageTypePublishBlocked:
-		return &PublishBlocked{}, nil
+	case ControlMessageTypePublishSkipped:
+		return &PublishSkipped{}, nil
 	case ControlMessageTypeRequestUpdate:
 		return &RequestUpdate{}, nil
 	case ControlMessageTypeRequestOk:

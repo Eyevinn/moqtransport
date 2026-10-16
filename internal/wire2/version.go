@@ -12,8 +12,12 @@ import "fmt"
 type Version uint8
 
 const (
-	// Version18 is draft-ietf-moq-transport-18, the current interop target.
+	// Version18 is draft-ietf-moq-transport-18.
 	Version18 Version = 18
+
+	// Version22 is draft-ietf-moq-transport-22. It and draft-18 are the two
+	// interop targets the working group named at its October 2026 interim.
+	Version22 Version = 22
 )
 
 // ALPN returns the protocol identifier this version negotiates under, for both
@@ -27,10 +31,20 @@ func (v Version) String() string {
 }
 
 // supportedVersions lists what this build speaks, most preferred first. Order
-// matters: it is the offer order in NextProtos, and a peer picking any entry
-// gets a version we implement. Adding a draft means adding a declaration set
-// and one entry here.
+// matters: it is the offer order in NextProtos, and Go's TLS server picks the
+// first of its own protocols the client also offers. Adding a draft means
+// adding a declaration set and one entry here.
+//
+// Version22 has its codecs but is not offered yet: the session layer does not
+// speak it.
 var supportedVersions = []Version{Version18}
+
+// AtLeast reports whether v is draft n or later. Behavior that changed between
+// drafts is gated on it rather than on equality, so a third declaration set
+// inherits the newer behavior by default.
+func (v Version) AtLeast(n Version) bool {
+	return v >= n
+}
 
 // SupportedALPNs returns the protocol identifiers to offer, most preferred
 // first.

@@ -100,6 +100,11 @@ type requestStream struct {
 	parser *wire2.ControlMessageParser
 	qlog   qlogger
 
+	// version is the draft the session negotiated. Messages are encoded in
+	// it, and the behavior of a request that changed between drafts is
+	// chosen by it.
+	version wire2.Version
+
 	ctx       context.Context
 	cancelCtx context.CancelCauseFunc
 
@@ -115,7 +120,7 @@ type requestStream struct {
 
 // newRequestStream wraps an already-open bidirectional stream. parent is the
 // session's context, so a session that ends cancels every request it carries.
-func newRequestStream(parent context.Context, stream Stream, logger qlogger) *requestStream {
+func newRequestStream(parent context.Context, stream Stream, logger qlogger, version wire2.Version) *requestStream {
 	ctx, cancel := context.WithCancelCause(parent)
 	// Section 7.2 places request streams below the control streams and above
 	// Objects. This is the one place every request stream passes through,
@@ -123,8 +128,9 @@ func newRequestStream(parent context.Context, stream Stream, logger qlogger) *re
 	setStreamPriority(stream, StreamPriority{Urgency: UrgencyRequest, Incremental: true})
 	return &requestStream{
 		stream:    stream,
-		parser:    wire2.NewControlMessageParser(stream, wire2.ScopeRequest),
+		parser:    wire2.NewControlMessageParser(stream, wire2.ScopeRequest, version),
 		qlog:      logger,
+		version:   version,
 		ctx:       ctx,
 		cancelCtx: cancel,
 	}
@@ -142,10 +148,10 @@ func (r *requestStream) Context() context.Context {
 
 // write frames msg and sends it. Concurrent calls are serialized, so a message
 // is never interleaved with another.
-func (r *requestStream) write(msg wire2.MessageV18) error {
+func (r *requestStream) write(msg wire2.ControlMessage) error {
 	// Encoding outside the lock keeps a large message from blocking a small
 	// one; the write itself is what has to be atomic.
-	buf, err := wire2.AppendControlMessage(nil, msg)
+	buf, err := wire2.AppendControlMessage(nil, msg, r.version)
 	if err != nil {
 		return err
 	}
@@ -179,7 +185,7 @@ func (r *requestStream) closeSend() error {
 
 // finish sends msg and then FINs, which is the shape of every graceful ending:
 // one final message with nothing after it.
-func (r *requestStream) finish(msg wire2.MessageV18) error {
+func (r *requestStream) finish(msg wire2.ControlMessage) error {
 	if err := r.write(msg); err != nil {
 		return err
 	}

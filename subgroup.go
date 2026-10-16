@@ -150,10 +150,10 @@ type subgroupReceiver struct {
 }
 
 func newSubgroupReceiver(stream ReceiveStream, header *wire2.SubgroupHeader, r dataStreamReader,
-	defaultPriority uint8, logger qlogger) *subgroupReceiver {
+	defaultPriority uint8, logger qlogger, version wire2.Version) *subgroupReceiver {
 	return &subgroupReceiver{
 		stream:          stream,
-		reader:          wire2.NewSubgroupReader(header, r),
+		reader:          wire2.NewSubgroupReader(header, r, version),
 		defaultPriority: defaultPriority,
 		qlog:            logger,
 	}

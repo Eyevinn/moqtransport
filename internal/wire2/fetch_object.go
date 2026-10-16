@@ -77,7 +77,22 @@ const (
 	EndOfRangeNonExistent EndOfRange = 0x8C
 	// EndOfRangeUnknown means the publisher cannot determine their status.
 	EndOfRangeUnknown EndOfRange = 0x10C
+	// EndOfRangeTimedOut means a relay gave up waiting for them when the
+	// request's Fill Timeout ran out. Draft-22 only (draft-20 added it);
+	// in draft-18 it is an invalid Serialization Flags value.
+	EndOfRangeTimedOut EndOfRange = 0x20C
 )
+
+// validIn reports whether e is an End of Range value version defines.
+func (e EndOfRange) validIn(version Version) bool {
+	switch e {
+	case EndOfRangeNonExistent, EndOfRangeUnknown:
+		return true
+	case EndOfRangeTimedOut:
+		return version.AtLeast(Version22)
+	}
+	return false
+}
 
 func (e EndOfRange) String() string {
 	switch e {
@@ -87,6 +102,8 @@ func (e EndOfRange) String() string {
 		return "END_OF_NON_EXISTENT_RANGE"
 	case EndOfRangeUnknown:
 		return "END_OF_UNKNOWN_RANGE"
+	case EndOfRangeTimedOut:
+		return "END_OF_TIMED_OUT_RANGE"
 	}
 	return fmt.Sprintf("invalid end of range: %#x", uint64(e))
 }
@@ -128,7 +145,8 @@ type FetchReader struct {
 	// omitted the parameter is Ascending.
 	GroupOrder GroupOrder
 
-	r byteReader
+	r       byteReader
+	version Version
 
 	priorGroupID  uint64
 	priorObjectID uint64
@@ -140,12 +158,12 @@ type FetchReader struct {
 }
 
 // NewFetchReader returns a reader for the Objects that follow a FETCH_HEADER
-// on r, delivered in the given Group Order.
-func NewFetchReader(r byteReader, order GroupOrder) *FetchReader {
+// on r, delivered in the given Group Order on a session speaking version.
+func NewFetchReader(r byteReader, order GroupOrder, version Version) *FetchReader {
 	if !order.Valid() {
 		order = GroupOrderAscending
 	}
-	return &FetchReader{GroupOrder: order, r: r}
+	return &FetchReader{GroupOrder: order, r: r, version: version}
 }
 
 // Next reads the next record. It returns io.EOF, and only io.EOF, when the
@@ -243,7 +261,7 @@ func (f *FetchReader) Next() (*FetchObject, error) {
 	}
 
 	if flags&fetchFlagProperties != 0 {
-		if obj.Properties, err = readProperties(f.r); err != nil {
+		if obj.Properties, err = readProperties(f.r, f.version); err != nil {
 			return nil, err
 		}
 	}
@@ -282,9 +300,7 @@ func (f *FetchReader) Next() (*FetchObject, error) {
 // MoQFramerV18Test.FetchEndOfRangeSetsPriorGroupAndObject puts an ordinary
 // Object immediately after an indicator and is the clearest statement of it.
 func (f *FetchReader) readEndOfRange(kind EndOfRange) (*FetchObject, error) {
-	switch kind {
-	case EndOfRangeNonExistent, EndOfRangeUnknown:
-	default:
+	if !kind.validIn(f.version) {
 		return nil, errInvalidSerializationFlags
 	}
 
@@ -341,17 +357,20 @@ func (f *FetchReader) remember(obj *FetchObject) {
 type FetchWriter struct {
 	GroupOrder GroupOrder
 
+	version Version
+
 	priorGroupID  uint64
 	priorObjectID uint64
 	havePrior     bool
 }
 
-// NewFetchWriter returns a writer for Objects on a FETCH data stream.
-func NewFetchWriter(order GroupOrder) *FetchWriter {
+// NewFetchWriter returns a writer for Objects on a FETCH data stream of a
+// session speaking version.
+func NewFetchWriter(order GroupOrder, version Version) *FetchWriter {
 	if !order.Valid() {
 		order = GroupOrderAscending
 	}
-	return &FetchWriter{GroupOrder: order}
+	return &FetchWriter{GroupOrder: order, version: version}
 }
 
 // AppendObject writes obj onto buf.
@@ -413,9 +432,7 @@ func (f *FetchWriter) AppendObject(buf []byte, obj *FetchObject) ([]byte, error)
 // the absolute Group ID and Object ID it names, and nothing else. See
 // readEndOfRange for why no Object Payload Length follows.
 func (f *FetchWriter) appendEndOfRange(buf []byte, obj *FetchObject) ([]byte, error) {
-	switch obj.EndOfRange {
-	case EndOfRangeNonExistent, EndOfRangeUnknown:
-	default:
+	if !obj.EndOfRange.validIn(f.version) {
 		return nil, errInvalidSerializationFlags
 	}
 	if len(obj.Payload) > 0 {
