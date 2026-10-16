@@ -103,7 +103,7 @@ func TestLocationFilterInvalid(t *testing.T) {
 	// A Start Group plus End Group Delta past 2^64-1, in either draft.
 	overflow := []byte{0x03}
 	overflow = append(overflow, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) // StartGroup 2^64-1
-	overflow = append(overflow, 0x00, 0x01)                                          // StartObject, EndGroupDelta
+	overflow = append(overflow, 0x00, 0x01)                                           // StartObject, EndGroupDelta
 	_, err = f.parseValue(overflow, Version22)
 	assert.ErrorIs(t, err, errEndGroupOverflow)
 
