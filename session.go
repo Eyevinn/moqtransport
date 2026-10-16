@@ -341,6 +341,9 @@ func (s *Session) registerTrackAlias(alias uint64, t *RemoteTrack) error {
 	return s.remote.add(alias, t)
 }
 
+// nextRequestID implements subscriberSession.
+func (s *Session) nextRequestID() uint64 { return s.requestIDs.nextID() }
+
 // unregisterTrackAlias implements subscriberSession.
 func (s *Session) unregisterTrackAlias(alias uint64, t *RemoteTrack) {
 	s.remote.remove(alias, t)
@@ -597,7 +600,9 @@ func (s *Session) handleBidiStream(stream Stream) {
 
 	// Section 10.1: a Request ID with the wrong parity for its sender, or one
 	// already used, closes the session. Checking it here covers all seven
-	// request types at once, before any of them reaches a handler.
+	// request types at once, before any of them reaches a handler; the
+	// REQUEST_UPDATEs that follow on the stream consume IDs too, and the
+	// stream checks those as they arrive.
 	if requestID, ok := wire2.RequestID(msg); ok {
 		if err := s.peerIDs.use(requestID); err != nil {
 			rs.cancel(StreamErrorInternal, err)
@@ -605,6 +610,7 @@ func (s *Session) handleBidiStream(stream Stream) {
 			return
 		}
 	}
+	rs.peerIDs = s.peerIDs
 
 	switch m := msg.(type) {
 	case *wire2.Subscribe:

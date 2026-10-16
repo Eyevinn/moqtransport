@@ -330,6 +330,45 @@ func TestSessionSubscriptionUpdate(t *testing.T) {
 		}
 		assert.Equal(t, uint8(200), sub.SubscriberPriority())
 		assert.False(t, sub.Forward())
+
+		// A second update consumes a Request ID of its own as well: reusing
+		// one, the subscription's included, would close the session with
+		// INVALID_REQUEST_ID.
+		require.NoError(t, track.Update(WithUpdatedForward(true)))
+		select {
+		case update := <-updates:
+			assert.True(t, update.Forward)
+		case <-ctx.Done():
+			t.Fatal("the second update never arrived")
+		}
+		assert.NoError(t, server.Context().Err())
+	})
+}
+
+// Each REQUEST_UPDATE consumes a Request ID (Section 10.1), so one that reuses
+// the ID of the subscription it updates is a duplicate, and the session ends.
+func TestSessionRejectsReusedUpdateRequestID(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		accepted := make(chan struct{})
+		server := &Session{
+			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+				if _, err := r.Accept(); err == nil {
+					close(accepted)
+				}
+			}),
+		}
+		client := &Session{}
+		runSessions(t, client, server)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		track, err := client.Subscribe(ctx, []string{"ns"}, "track")
+		require.NoError(t, err)
+		<-accepted
+
+		require.NoError(t, track.write(&wire2.RequestUpdate{RequestID: track.RequestID(), Parameters: wire2.Parameters{}}))
+		<-server.Context().Done()
+		assert.ErrorContains(t, context.Cause(server.Context()), "request ID has already been used")
 	})
 }
 
