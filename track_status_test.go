@@ -3,7 +3,6 @@ package moqtransport
 import (
 	"context"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/Eyevinn/moqtransport/internal/wire2"
@@ -15,7 +14,7 @@ import (
 // SUBSCRIBE_OK would have carried, minus the Track Alias -- a status request
 // creates no subscription for one to name.
 func TestTrackStatusEndToEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
 				if r.Track() != "video0" {
@@ -31,7 +30,7 @@ func TestTrackStatusEndToEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -51,14 +50,14 @@ func TestTrackStatusEndToEnd(t *testing.T) {
 }
 
 func TestTrackStatusRejected(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
 				_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -71,9 +70,9 @@ func TestTrackStatusRejected(t *testing.T) {
 }
 
 func TestTrackStatusWithoutHandler(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		client, server := &Session{}, &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -88,7 +87,7 @@ func TestTrackStatusWithoutHandler(t *testing.T) {
 // A status request is one message and one answer, so a second answer has
 // nowhere to go.
 func TestTrackStatusAnsweredOnce(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		second := make(chan error, 1)
 		server := &Session{
 			TrackStatusHandler: TrackStatusHandlerFunc(func(r *TrackStatusRequest) {
@@ -97,7 +96,7 @@ func TestTrackStatusAnsweredOnce(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

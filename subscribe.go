@@ -145,6 +145,13 @@ func activeFilter(f LocationFilter, present bool) (LocationFilter, bool) {
 	return f, true
 }
 
+// IncludeProperties reports whether the subscriber wants Track Properties in
+// SUBSCRIBE_OK (draft-22 Section 9.20.21). It is true unless the subscriber
+// said otherwise, and always true on a draft-18 session. Accept honors it.
+func (r *SubscribeRequest) IncludeProperties() (bool, error) {
+	return r.Parameters().IncludeProperties()
+}
+
 // RendezvousTimeout is how long the subscriber is willing to wait for a
 // publisher of the Track when there is none yet, and whether it said so
 // (Section 10.2.6). A relay honoring it holds the request up to that long --
@@ -185,6 +192,10 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		groupOrder = GroupOrderAscending
 	}
 	filter, hasFilter := activeFilter(params.LocationFilter())
+	includeProperties, err := params.IncludeProperties()
+	if err != nil {
+		return nil, err
+	}
 
 	ok := &wire2.SubscribeOk{
 		TrackAlias: r.session.trackAlias(r.namespace, r.track),
@@ -192,6 +203,10 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	}
 	for _, opt := range opts {
 		opt(ok)
+	}
+	if !includeProperties {
+		// The field stays; Section 9.20.21 asks only that it be empty.
+		ok.TrackProperties = nil
 	}
 
 	sub := &Subscription{
@@ -208,6 +223,7 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 		hasFilter:     hasFilter,
 	}
 	sub.joiningLocation, sub.hasJoiningLocation = ok.Parameters.LargestObject()
+	sub.largest, sub.hasLargest = sub.joiningLocation, sub.hasJoiningLocation
 
 	r.mu.Lock()
 	if r.answered {
@@ -339,6 +355,13 @@ type Subscription struct {
 	streamCount uint64
 	closed      bool
 
+	// largest is the subscription's Largest Object as this publisher knows
+	// it: what Accept reported, raised by every Object written since and by
+	// UpdateLargestObject. Draft-22 sends it in REQUEST_UPDATE_OK and
+	// PUBLISH_STATE_NOTIFY, both of which the library writes itself.
+	largest    Location
+	hasLargest bool
+
 	// updates is written and closed only by the request stream's reader
 	// goroutine, which is what makes closing it safe: there is never a send in
 	// flight when it closes. Other goroutines only read the field, under mu.
@@ -400,10 +423,43 @@ func (s *Subscription) SubscriberPriority() uint8 {
 }
 
 // Forward reports whether the subscriber currently wants Objects delivered.
+// It is the opposite of Paused.
 func (s *Subscription) Forward() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.forward
+}
+
+// Paused reports whether the subscription is paused: established, but with
+// no Objects to be sent until it is resumed (draft-22 Section 3.1.1). Either
+// side can pause it -- the subscriber with REQUEST_UPDATE, the publisher with
+// NotifyState.
+func (s *Subscription) Paused() bool {
+	return !s.Forward()
+}
+
+// LargestObject returns the subscription's Largest Object as this publisher
+// knows it, and whether there is one.
+func (s *Subscription) LargestObject() (Location, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.largest, s.hasLargest
+}
+
+// UpdateLargestObject raises the Largest Object to l if l is larger. Objects
+// written through this subscription do it on their own; a relay that learns of
+// newer Objects some other way -- an upstream it has paused, say -- reports
+// them here, so that what the library sends on its behalf is current.
+func (s *Subscription) UpdateLargestObject(l Location) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noteLargestLocked(l)
+}
+
+func (s *Subscription) noteLargestLocked(l Location) {
+	if !s.hasLargest || l.Compare(s.largest) > 0 {
+		s.largest, s.hasLargest = l, true
+	}
 }
 
 // GroupOrder is the order Groups are delivered in for this subscription. It
@@ -485,7 +541,7 @@ func (s *Subscription) OpenSubgroup(groupID, subgroupID uint64, priority uint8, 
 		GroupID:            groupID,
 		SubgroupID:         subgroupID,
 	})
-	sg, err := newSubgroup(stream, header, s.qlog)
+	sg, err := newSubgroup(stream, header, s.qlog, s.UpdateLargestObject)
 	if err != nil {
 		stream.Reset(uint32(StreamErrorInternal))
 		return nil, err
@@ -519,6 +575,7 @@ func (s *Subscription) SendDatagram(o Object) error {
 		return err
 	}
 	s.qlog.logDatagram(moqt.ObjectDatagramEventCreated, datagram)
+	s.UpdateLargestObject(Location{Group: o.GroupID, Object: o.ObjectID})
 	return nil
 }
 
@@ -561,26 +618,65 @@ func (s *Subscription) Close(code PublishDoneCode, reason string) error {
 func (s *Subscription) applyUpdate(update *wire2.RequestUpdate) error {
 	notification, err := s.mergeUpdate(update)
 	if err != nil {
+		code := RequestErrorInternal
+		var rejected *updateRejection
+		if errors.As(err, &rejected) {
+			code = rejected.code
+		}
 		writeErr := s.write(&wire2.RequestError{
-			ErrorCode:   uint64(RequestErrorInternal),
+			ErrorCode:   uint64(code),
 			ErrorReason: err.Error(),
 		})
 		if closeErr := s.Close(PublishDoneUpdateFailed, err.Error()); writeErr == nil {
 			writeErr = closeErr
 		}
+		if rejected != nil {
+			// A refusal the draft names a code for is the request's business,
+			// not a fault in the session.
+			return writeErr
+		}
 		return errors.Join(err, writeErr)
 	}
 
-	if err := s.write(&wire2.RequestOk{Parameters: wire2.Parameters{}}); err != nil {
+	ok := &wire2.RequestOk{Parameters: wire2.Parameters{}}
+	if s.version.AtLeast(wire2.Version22) {
+		// Draft-22's REQUEST_UPDATE_OK carries LARGEST_OBJECT, which the
+		// publisher MUST send once anything has been published: a subscriber
+		// that widened its filter learns from it what it missed.
+		if largest, ok2 := s.LargestObject(); ok2 {
+			ok.Parameters = append(ok.Parameters, wire2.LocationParameter(wire2.ParamLargestObject, largest))
+		}
+	}
+	if err := s.write(ok); err != nil {
 		return err
 	}
 	return s.notify(notification)
+}
+
+// updateRejection is a REQUEST_UPDATE refused for a reason the draft gives a
+// REQUEST_ERROR code to.
+type updateRejection struct {
+	code   RequestErrorCode
+	reason string
+}
+
+func (e *updateRejection) Error() string { return fmt.Sprintf("%v: %v", e.code, e.reason) }
+
+// errRangeFiltersUnsupported refuses Range Filters. Their use needs a
+// MAX_FILTER_RANGES above zero, which this implementation does not advertise,
+// so a peer sending one has exceeded the limit (draft-22 Section 3.3.2).
+func errRangeFiltersUnsupported() *updateRejection {
+	return &updateRejection{code: RequestErrorInvalidFilter, reason: "range filters are not supported"}
 }
 
 // mergeUpdate overlays an update's parameters on the current state. A
 // parameter the update does not mention keeps its value: Section 10.9 gives no
 // way to remove one.
 func (s *Subscription) mergeUpdate(update *wire2.RequestUpdate) (SubscriptionUpdate, error) {
+	if update.Parameters.HasRangeFilter() {
+		return SubscriptionUpdate{}, errRangeFiltersUnsupported()
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

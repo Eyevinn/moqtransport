@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,10 @@ type subscriberSession interface {
 	// its own (draft-18 Section 10.1, draft-22 Section 6.4.2.1); it does not
 	// reuse the ID of the request it updates.
 	nextRequestID() uint64
+
+	// peerMaxRequestUpdates is how many unanswered REQUEST_UPDATEs the peer
+	// accepts on one stream, 0 for no limit.
+	peerMaxRequestUpdates() uint64
 }
 
 // PublishDone is the publisher's report that a subscription has ended
@@ -38,7 +43,8 @@ type PublishDone struct {
 	// subscriber's signal that it has seen everything: PUBLISH_DONE travels on
 	// a control stream and usually overtakes late-opening data streams.
 	//
-	// A publisher that cannot count exactly sets 2^62-1.
+	// A publisher that cannot count exactly sets 2^62-1 in draft-18 and
+	// 2^64-1 in draft-22. In draft-22 the count includes fill fetch streams.
 	StreamCount uint64
 }
 
@@ -83,6 +89,26 @@ type RemoteTrack struct {
 	answerErr    error
 	publishDone  *PublishDone
 	endedStreams uint64
+
+	// largest and paused are the subscription's state as the publisher last
+	// reported it: SUBSCRIBE_OK, then REQUEST_UPDATE_OK and
+	// PUBLISH_STATE_NOTIFY (draft-22), with paused also following what we
+	// asked for ourselves.
+	largest    Location
+	hasLargest bool
+	paused     bool
+
+	// pendingUpdates counts REQUEST_UPDATEs not yet answered, which a
+	// draft-22 peer can limit with MAX_REQUEST_UPDATES.
+	pendingUpdates uint64
+
+	// states carries PUBLISH_STATE_NOTIFYs to the application. Like
+	// Subscription.Updates it is created on first ask, written only by the
+	// request stream's reader goroutine, and closed by it when the stream
+	// ends.
+	states       chan PublishState
+	statesClosed bool
+	statesEnded  bool
 }
 
 // remoteTrackObjectBuffer is how many Objects are held for a consumer that is
@@ -156,9 +182,42 @@ func (t *RemoteTrack) TrackProperties() KVPList {
 // track MUST send it, so its absence means the track is empty so far.
 //
 // It is what a subscriber using a relative filter needs in order to know where
-// its subscription actually starts.
+// its subscription actually starts. SUBSCRIBE_OK sets it; on a draft-22
+// session REQUEST_UPDATE_OK and PUBLISH_STATE_NOTIFY move it on.
 func (t *RemoteTrack) LargestObject() (Location, bool) {
-	return t.Parameters().LargestObject()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.largest, t.hasLargest
+}
+
+// Paused reports whether the subscription is paused, either because we asked
+// for it with WithForward(false) or an update, or because the publisher said
+// so with PUBLISH_STATE_NOTIFY.
+func (t *RemoteTrack) Paused() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.paused
+}
+
+// StateUpdates returns the channel the publisher's PUBLISH_STATE_NOTIFYs
+// arrive on (draft-22 only; a draft-18 session never sends one). It is closed
+// when the subscription's stream ends.
+//
+// Call it once, before the publisher could have anything to report. As with
+// Subscription.Updates, the first call is what starts queueing, and a
+// consumer that stops reading eventually stalls this subscription's stream.
+// LargestObject and Paused are kept current whether or not anyone reads.
+func (t *RemoteTrack) StateUpdates() <-chan PublishState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.states == nil {
+		t.states = make(chan PublishState, subscriptionUpdateBuffer)
+		if t.statesEnded {
+			close(t.states)
+			t.statesClosed = true
+		}
+	}
+	return t.states
 }
 
 // PublishDone returns the publisher's report that the subscription ended, if
@@ -255,18 +314,45 @@ func (t *RemoteTrack) subgroupStreamEnded(ctx context.Context, header *wire2.Sub
 //
 // A parameter the update does not mention keeps its value; there is no way to
 // remove one.
+//
+// A draft-22 publisher may limit how many updates can be unanswered at once
+// (MAX_REQUEST_UPDATES); an update beyond that fails with
+// ErrTooManyRequestUpdates rather than being sent, since sending it would end
+// the session.
 func (t *RemoteTrack) Update(opts ...SubscribeUpdateOption) error {
-	update := &wire2.RequestUpdate{
-		RequestID:  t.session.nextRequestID(),
-		Parameters: wire2.Parameters{},
-	}
+	update := &wire2.RequestUpdate{Parameters: wire2.Parameters{}}
 	for _, opt := range opts {
 		if err := opt(update); err != nil {
 			return err
 		}
 	}
-	return t.write(update)
+
+	t.mu.Lock()
+	if limit := t.session.peerMaxRequestUpdates(); limit > 0 && t.pendingUpdates >= limit {
+		t.mu.Unlock()
+		return ErrTooManyRequestUpdates
+	}
+	t.pendingUpdates++
+	if forward, ok := update.Parameters.Get(wire2.ParamForward); ok {
+		t.paused = forward.Number == 0
+	}
+	t.mu.Unlock()
+
+	// The Request ID is allocated last, so an update refused above does not
+	// leave a hole in the sequence.
+	update.RequestID = t.session.nextRequestID()
+	if err := t.write(update); err != nil {
+		t.mu.Lock()
+		t.pendingUpdates--
+		t.mu.Unlock()
+		return err
+	}
+	return nil
 }
+
+// ErrTooManyRequestUpdates means the publisher's MAX_REQUEST_UPDATES limit is
+// reached: wait for an earlier update to be answered.
+var ErrTooManyRequestUpdates = errors.New("too many unanswered REQUEST_UPDATEs")
 
 // Close ends the subscription by resetting its request stream, which is what
 // draft-18 uses in place of UNSUBSCRIBE. It also ends delivery at once: a
@@ -290,6 +376,7 @@ func (t *RemoteTrack) awaitEstablished(ctx context.Context) error {
 // run reads the publisher's half of the request stream until it ends.
 func (t *RemoteTrack) run() error {
 	err := t.requestStream.run(t.handleMessage)
+	t.closeStates()
 
 	// Whatever ended the subscription, release anyone still waiting for the
 	// answer that is now never coming.
@@ -311,7 +398,7 @@ func (t *RemoteTrack) run() error {
 	ended := t.endedStreams
 	t.mu.Unlock()
 	cause := context.Cause(t.ctx)
-	if err == nil && done != nil && done.StreamCount != unknownStreamCount && ended < done.StreamCount {
+	if err == nil && done != nil && done.StreamCount != unknownStreamCount(t.version) && ended < done.StreamCount {
 		go t.awaitDataStreams(cause, done.StreamCount)
 	} else {
 		t.finishDelivery(cause)
@@ -320,8 +407,14 @@ func (t *RemoteTrack) run() error {
 }
 
 // unknownStreamCount is the PUBLISH_DONE Stream Count of a publisher that
-// cannot count exactly (Section 10.11), so there is nothing to wait for.
-const unknownStreamCount = 1<<62 - 1
+// cannot count exactly, so there is nothing to wait for: 2^62-1 in draft-18
+// (Section 10.11), the largest vi64 from draft-20 on (WG PR #1831).
+func unknownStreamCount(version wire2.Version) uint64 {
+	if version.AtLeast(wire2.Version22) {
+		return math.MaxUint64
+	}
+	return 1<<62 - 1
+}
 
 // publishDoneGrace bounds how long delivery waits for the data streams a
 // PUBLISH_DONE announced. The missing ones are usually milliseconds behind
@@ -377,6 +470,13 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 
 	case *wire2.RequestError:
 		t.mu.Lock()
+		if t.params != nil {
+			// Established, so this answers a REQUEST_UPDATE. The publisher
+			// ends the subscription with PUBLISH_DONE(UPDATE_FAILED) next.
+			t.answeredUpdateLocked()
+			t.mu.Unlock()
+			return nil
+		}
 		t.answerErr = &RequestError{
 			Code:   RequestErrorCode(m.ErrorCode),
 			Reason: m.ErrorReason,
@@ -398,15 +498,83 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 		return nil
 
 	case *wire2.RequestOk:
-		// The answer to a REQUEST_UPDATE we sent. There is nothing in it that
-		// changes our own state: we already know what we asked for. Track
-		// Properties belong only in a TRACK_STATUS_OK (Section 10.5).
+		// The answer to a REQUEST_UPDATE we sent. We already know what we
+		// asked for; what is new is the publisher's Largest Object, which a
+		// draft-22 REQUEST_UPDATE_OK carries. Track Properties belong only in
+		// a TRACK_STATUS_OK (Section 10.5).
 		if len(m.TrackProperties) > 0 {
 			return errUnexpectedTrackProperties
 		}
+		t.mu.Lock()
+		t.answeredUpdateLocked()
+		if largest, ok := m.Parameters.LargestObject(); ok {
+			t.noteLargestLocked(largest)
+		}
+		t.mu.Unlock()
 		return nil
+
+	case *wire2.PublishStateNotify:
+		return t.stateNotified(m)
 	}
 	return errUnexpectedMessageOnRequestStream
+}
+
+func (t *RemoteTrack) answeredUpdateLocked() {
+	if t.pendingUpdates > 0 {
+		t.pendingUpdates--
+	}
+}
+
+func (t *RemoteTrack) noteLargestLocked(l Location) {
+	if !t.hasLargest || l.Compare(t.largest) > 0 {
+		t.largest, t.hasLargest = l, true
+	}
+}
+
+// stateNotified applies a PUBLISH_STATE_NOTIFY and hands it to the
+// application. It is unilateral: there is nothing to answer.
+func (t *RemoteTrack) stateNotified(m *wire2.PublishStateNotify) error {
+	state, err := publishStateFrom(m.Parameters)
+	if err != nil {
+		return err
+	}
+	t.mu.Lock()
+	if t.params == nil {
+		// Draft-22 Section 9.10 sends it only on an established
+		// subscription.
+		t.mu.Unlock()
+		return errUnexpectedMessageOnRequestStream
+	}
+	if state.HasLargestObject {
+		t.noteLargestLocked(state.LargestObject)
+	}
+	if state.HasPaused {
+		t.paused = state.Paused
+	}
+	states := t.states
+	closed := t.statesClosed
+	t.mu.Unlock()
+	if states == nil || closed {
+		return nil
+	}
+	select {
+	case states <- state:
+		return nil
+	case <-t.ctx.Done():
+		return context.Cause(t.ctx)
+	}
+}
+
+// closeStates closes the PUBLISH_STATE_NOTIFY channel. It runs on the reader
+// goroutine after the read loop has finished, so no send can be in flight.
+func (t *RemoteTrack) closeStates() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.statesEnded = true
+	if t.states != nil && !t.statesClosed {
+		close(t.states)
+		t.statesClosed = true
+	}
 }
 
 // accepted records SUBSCRIBE_OK and registers the Track Alias, which is what
@@ -424,6 +592,7 @@ func (t *RemoteTrack) accepted(ok *wire2.SubscribeOk) error {
 	t.trackAlias = ok.TrackAlias
 	t.params = ok.Parameters
 	t.properties = ok.TrackProperties
+	t.largest, t.hasLargest = ok.Parameters.LargestObject()
 	t.mu.Unlock()
 
 	// Registering can fail with DUPLICATE_TRACK_ALIAS, which closes the

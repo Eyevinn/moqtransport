@@ -23,11 +23,16 @@ type Subgroup struct {
 	writer  *wire2.SubgroupWriter
 	qlog    qlogger
 	done    bool
+
+	// onObject is told the Location of every Object written, so the
+	// subscription that opened the stream knows its Largest Object. Nil
+	// tells nobody.
+	onObject func(Location)
 }
 
 // newSubgroup opens a subgroup stream by writing its header, which is also the
 // stream's type varint.
-func newSubgroup(stream SendStream, header *wire2.SubgroupHeader, logger qlogger) (*Subgroup, error) {
+func newSubgroup(stream SendStream, header *wire2.SubgroupHeader, logger qlogger, onObject func(Location)) (*Subgroup, error) {
 	buf, err := wire2.AppendSubgroupHeader(nil, header)
 	if err != nil {
 		return nil, err
@@ -37,9 +42,10 @@ func newSubgroup(stream SendStream, header *wire2.SubgroupHeader, logger qlogger
 	}
 	logger.logStreamType(moqt.OwnerLocal, stream, moqt.StreamTypeSubgroupHeader)
 	return &Subgroup{
-		stream: stream,
-		writer: wire2.NewSubgroupWriter(header),
-		qlog:   logger,
+		stream:   stream,
+		writer:   wire2.NewSubgroupWriter(header),
+		qlog:     logger,
+		onObject: onObject,
 	}, nil
 }
 
@@ -100,6 +106,9 @@ func (s *Subgroup) write(obj *wire2.SubgroupObject) error {
 		return err
 	}
 	s.qlog.logSubgroupObject(moqt.SubgroupObjectEventCreated, s.stream, s.writer.Header, obj)
+	if s.onObject != nil {
+		s.onObject(Location{Group: s.writer.Header.GroupID, Object: obj.ObjectID})
+	}
 	return nil
 }
 

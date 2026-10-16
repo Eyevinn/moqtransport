@@ -77,7 +77,14 @@ func (r *TrackStatusRequest) Parameters() Parameters { return r.params }
 
 // Accept answers with TRACK_STATUS_OK and finishes the stream. A status
 // request is one message and one answer; there is nothing to follow it.
+//
+// A draft-22 requester that sent INCLUDE_PROPERTIES 0 gets an empty Track
+// Properties block whatever status carries.
 func (r *TrackStatusRequest) Accept(status TrackStatus) error {
+	include, err := r.params.IncludeProperties()
+	if err != nil {
+		return err
+	}
 	if err := r.claim(); err != nil {
 		return err
 	}
@@ -85,9 +92,13 @@ func (r *TrackStatusRequest) Accept(status TrackStatus) error {
 	if params == nil {
 		params = wire2.Parameters{}
 	}
-	err := r.finish(&wire2.RequestOk{
+	properties := status.Properties
+	if !include {
+		properties = nil
+	}
+	err = r.finish(&wire2.RequestOk{
 		Parameters:      params,
-		TrackProperties: status.Properties,
+		TrackProperties: properties,
 	})
 	r.cancelCtx(errTrackStatusAnswered)
 	return err

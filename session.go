@@ -99,10 +99,11 @@ type Session struct {
 	// Objects missing. Off, subgroup ends are silent as before.
 	SubgroupEndEvents bool
 
-	conn    Connection
-	version wire2.Version
-	control *controlStreamPair
-	qlog    qlogger
+	conn      Connection
+	version   wire2.Version
+	control   *controlStreamPair
+	peerSetup *wire2.Setup
+	qlog      qlogger
 
 	requestIDs *requestIDGenerator
 	peerIDs    *peerRequestIDs
@@ -197,10 +198,12 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 		_ = s.closeWithError(SessionErrorInternal, err.Error())
 		return err
 	}
-	if _, err := s.control.awaitPeerSetup(ctx); err != nil {
+	peerSetup, err := s.control.awaitPeerSetup(ctx)
+	if err != nil {
 		_ = s.closeWithError(SessionErrorProtocolViolation, err.Error())
 		return err
 	}
+	s.peerSetup = peerSetup
 
 	// The handshake is done, so anything held while it ran can be handled now.
 	for _, held := range s.pendingUni.release() {
@@ -308,6 +311,10 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 			return nil, err
 		}
 	}
+	forward, err := msg.Parameters.Forward()
+	if err != nil {
+		return nil, err
+	}
 
 	stream, err := s.conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -315,6 +322,7 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	}
 	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	rt := newRemoteTrack(s.ctx, rs, s, msg.RequestID, namespace, track)
+	rt.paused = !forward
 
 	// The reader starts before the request goes out: the publisher may answer
 	// the moment it has the bytes, and a response that arrived while we were
@@ -343,6 +351,16 @@ func (s *Session) registerTrackAlias(alias uint64, t *RemoteTrack) error {
 
 // nextRequestID implements subscriberSession.
 func (s *Session) nextRequestID() uint64 { return s.requestIDs.nextID() }
+
+// peerMaxRequestUpdates implements subscriberSession: the peer's
+// MAX_REQUEST_UPDATES, 0 for no limit. Only draft-22 defines the option, and a
+// draft-18 peer that sent one anyway is not bound by it, so neither are we.
+func (s *Session) peerMaxRequestUpdates() uint64 {
+	if s.peerSetup == nil || !s.version.AtLeast(wire2.Version22) {
+		return 0
+	}
+	return s.peerSetup.MaxRequestUpdates()
+}
 
 // unregisterTrackAlias implements subscriberSession.
 func (s *Session) unregisterTrackAlias(alias uint64, t *RemoteTrack) {
@@ -615,6 +633,12 @@ func (s *Session) handleBidiStream(stream Stream) {
 	switch m := msg.(type) {
 	case *wire2.Subscribe:
 		req := newSubscribeRequest(rs, s, m)
+		if m.Parameters.HasRangeFilter() {
+			// We advertise no MAX_FILTER_RANGES, so any Range Filter is over
+			// the limit (draft-22 Section 3.3.2). The handler never sees it.
+			_ = req.Reject(RequestErrorInvalidFilter, "range filters are not supported")
+			return
+		}
 		if err := req.serve(s.SubscribeHandler); err != nil {
 			s.failIfProtocolError(err)
 		}

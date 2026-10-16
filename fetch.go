@@ -28,7 +28,8 @@ type FetchHandlerFunc func(*FetchRequest)
 func (f FetchHandlerFunc) HandleFetch(r *FetchRequest) { f(r) }
 
 // EndOfRange marks a run of Objects in a FETCH response that were not
-// serialized, because they do not exist or their status is unknown.
+// serialized, because they do not exist, their status is unknown, or (in
+// draft-22) a relay stopped waiting for them.
 type EndOfRange = wire2.EndOfRange
 
 const (
@@ -36,6 +37,10 @@ const (
 	EndOfRangeNonExistent = wire2.EndOfRangeNonExistent
 	// EndOfRangeUnknown says the publisher cannot determine their status.
 	EndOfRangeUnknown = wire2.EndOfRangeUnknown
+	// EndOfRangeTimedOut says a relay gave up waiting for them upstream when
+	// the request's Fill Timeout ran out. Draft-22 only; writing it on a
+	// draft-18 session fails.
+	EndOfRangeTimedOut = wire2.EndOfRangeTimedOut
 )
 
 // FetchObject is one record of a FETCH response.
@@ -70,10 +75,13 @@ type fetchSession interface {
 
 // FetchRequest is an incoming FETCH.
 //
-// A Joining FETCH arrives naming a subscription rather than a range; by the
-// time a handler sees it the range has been resolved against that
-// subscription, so Namespace, Track and Range answer the same way for both
-// kinds.
+// Its range is a location filter in both drafts. Draft-22 carries one in
+// LOCATION_FILTER, and it may be relative to the Largest Object or open ended,
+// which only the publisher can resolve; draft-18's explicit Start and End
+// Locations arrive as the equivalent absolute filter. A draft-18 Joining FETCH
+// names a subscription instead, and by the time a handler sees it the range
+// has been resolved against that subscription, so Namespace, Track and Filter
+// answer the same way for every kind.
 type FetchRequest struct {
 	*requestStream
 
@@ -83,13 +91,13 @@ type FetchRequest struct {
 	joiningRequestID uint64
 	namespace        []string
 	track            string
-	start            Location
-	end              Location
+	filter           LocationFilter
 	order            GroupOrder
 	params           wire2.Parameters
 
 	mu       sync.Mutex
 	answered bool
+	resolved *LocationRange
 }
 
 // RequestID is the ID the subscriber assigned to this FETCH.
@@ -101,18 +109,37 @@ func (r *FetchRequest) Namespace() []string { return r.namespace }
 // Track is the Track Name being fetched.
 func (r *FetchRequest) Track() string { return r.track }
 
-// Range is the requested range: the first Location wanted, and the Location
-// one past the last. An End Location whose Object is 0 means the whole of that
-// Group.
-func (r *FetchRequest) Range() (start, end Location) { return r.start, r.end }
+// Filter is the requested range as a location filter. The zero filter asks
+// for the whole Track up to the Largest Object.
+func (r *FetchRequest) Filter() LocationFilter { return r.filter }
+
+// Range resolves the request against the publisher's Largest Object
+// (hasLargest false when nothing has been published), the way draft-22
+// Section 9.20.9 evaluates a FETCH: an open or too distant end stops at the
+// Largest Object. Both ends are inclusive.
+//
+// It returns false for an empty range -- nothing published, or a start after
+// the Largest Object -- which the draft answers with INVALID_RANGE. A
+// resolved range also becomes the End Location Accept reports, unless
+// WithFetchEndLocation says otherwise.
+func (r *FetchRequest) Range(largest Location, hasLargest bool) (LocationRange, bool) {
+	rng, ok := r.filter.FetchRange(largest, hasLargest)
+	if ok {
+		r.mu.Lock()
+		r.resolved = &rng
+		r.mu.Unlock()
+	}
+	return rng, ok
+}
 
 // GroupOrder is the order the response must be delivered in. A FETCH that did
 // not ask is Ascending (Section 10.2.8).
 func (r *FetchRequest) GroupOrder() GroupOrder { return r.order }
 
-// Joining reports whether this is a Joining FETCH, and the Request ID of the
-// subscription it joins. The range has already been resolved against that
-// subscription, so this is for logging rather than for working anything out.
+// Joining reports whether this is a draft-18 Joining FETCH, and the Request ID
+// of the subscription it joins. The range has already been resolved against
+// that subscription, so this is for logging rather than for working anything
+// out.
 func (r *FetchRequest) Joining() (uint64, bool) {
 	if r.fetchType == wire2.FetchTypeStandalone {
 		return 0, false
@@ -126,23 +153,54 @@ func (r *FetchRequest) Parameters() Parameters { return r.params }
 // Accept answers with FETCH_OK and opens the unidirectional stream the Objects
 // travel on.
 //
+// FETCH_OK's End Location is the last Location the response covers. Accept
+// takes it from WithFetchEndLocation, or else from the range Range resolved,
+// or else from the filter's own end. A filter with an open end that nobody
+// resolved has no End Location yet, and the draft forbids FETCH_OK until it
+// is known, so Accept fails.
+//
 // The response stream is separate from the request stream, so Objects cannot
 // be written before the FETCH has been answered.
 func (r *FetchRequest) Accept(opts ...FetchOkOption) (*FetchResponse, error) {
+	var cfg fetchOkConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	includeProperties, err := r.params.IncludeProperties()
+	if err != nil {
+		return nil, err
+	}
+
 	r.mu.Lock()
 	if r.answered {
 		r.mu.Unlock()
 		return nil, errRequestAlreadyAnswered
 	}
+	end, known := cfg.endLocation, cfg.hasEndLocation
+	if !known && r.resolved != nil {
+		end, known = r.resolved.End, true
+	}
+	if !known {
+		end, known = r.filter.End()
+	}
+	if !known {
+		r.mu.Unlock()
+		return nil, errFetchEndLocationUnknown
+	}
 	r.answered = true
 	r.mu.Unlock()
 
 	ok := &wire2.FetchOk{
-		EndLocation: r.end,
-		Parameters:  wire2.Parameters{},
+		EndOfTrack:      cfg.endOfTrack,
+		EndLocation:     end,
+		Parameters:      wire2.Parameters{},
+		TrackProperties: cfg.properties,
 	}
-	for _, opt := range opts {
-		opt(ok)
+	if r.version == wire2.Version18 {
+		ok.EndLocation = wire2.V18EndLocation(end)
+	}
+	if !includeProperties {
+		ok.TrackProperties = nil
 	}
 
 	stream, err := r.session.openUniStream(r.ctx)
@@ -211,6 +269,9 @@ func (r *FetchRequest) handleMessage(msg wire2.ControlMessage) error {
 		ErrorReason: "updating a fetch is not supported",
 	})
 }
+
+var errFetchEndLocationUnknown = errors.New(
+	"fetch has an open end: resolve it with Range or set WithFetchEndLocation before accepting")
 
 // FetchResponse is the unidirectional stream a FETCH's Objects are written to.
 //
@@ -304,25 +365,34 @@ func (f *FetchResponse) Reset(code StreamErrorCode) {
 }
 
 // FetchOkOption customises the FETCH_OK sent by Accept.
-type FetchOkOption func(*wire2.FetchOk)
+type FetchOkOption func(*fetchOkConfig)
+
+type fetchOkConfig struct {
+	endOfTrack     bool
+	endLocation    Location
+	hasEndLocation bool
+	properties     KVPList
+}
 
 // WithEndOfTrack says the End Location is the end of the track, so no Object
 // at or beyond it will ever exist.
 func WithEndOfTrack() FetchOkOption {
-	return func(ok *wire2.FetchOk) { ok.EndOfTrack = true }
+	return func(c *fetchOkConfig) { c.endOfTrack = true }
 }
 
-// WithFetchEndLocation overrides the End Location reported in FETCH_OK, which
-// otherwise echoes what was asked for. It is the largest Location the response
-// covers, and a gap between the last Object and it means those Objects do not
-// exist.
+// WithFetchEndLocation sets the End Location reported in FETCH_OK: the last
+// Location the response covers, inclusive. A gap between the last Object and
+// it means those Objects do not exist. On a draft-18 session the library
+// encodes it the way that draft does, as the last Object plus one.
 func WithFetchEndLocation(l Location) FetchOkOption {
-	return func(ok *wire2.FetchOk) { ok.EndLocation = l }
+	return func(c *fetchOkConfig) { c.endLocation, c.hasEndLocation = l, true }
 }
 
-// WithFetchTrackProperties attaches Track Properties to the response.
+// WithFetchTrackProperties attaches Track Properties to the response. A
+// draft-22 subscriber can ask for none with INCLUDE_PROPERTIES, and then none
+// are sent.
 func WithFetchTrackProperties(properties KVPList) FetchOkOption {
-	return func(ok *wire2.FetchOk) { ok.TrackProperties = append(ok.TrackProperties, properties...) }
+	return func(c *fetchOkConfig) { c.properties = append(c.properties, properties...) }
 }
 
 // FetchStream is a FETCH this endpoint made: the request, its answer, and the
@@ -369,9 +439,10 @@ func (f *FetchStream) RequestID() uint64 { return f.requestID }
 // GroupOrder is the order the response is delivered in.
 func (f *FetchStream) GroupOrder() GroupOrder { return f.order }
 
-// EndLocation is the largest Location the response covers, from FETCH_OK. A
-// gap between the last Object received and it means those Objects do not
-// exist, provided the stream ended with a FIN.
+// EndLocation is the last Location the response covers, inclusive, from
+// FETCH_OK. A gap between the last Object received and it means those Objects
+// do not exist, provided the stream ended with a FIN. An Object of
+// MaxObjectID covers the rest of its Group.
 func (f *FetchStream) EndLocation() Location {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -510,6 +581,9 @@ func (f *FetchStream) handleMessage(msg wire2.ControlMessage) error {
 		}
 		f.answered = true
 		f.endLocation = m.EndLocation
+		if f.version == wire2.Version18 {
+			f.endLocation = wire2.InclusiveFromV18End(m.EndLocation)
+		}
 		f.endOfTrack = m.EndOfTrack
 		f.properties = m.TrackProperties
 		f.mu.Unlock()
@@ -552,27 +626,45 @@ func WithFetchGroupOrder(order GroupOrder) FetchOption {
 	}
 }
 
-// Fetch asks for the Objects in a range that already exist.
+// Fetch asks for the Objects of a track that already exist and that filter
+// admits. The zero filter asks for the whole Track up to the publisher's
+// Largest Object; AbsoluteRange asks for an explicit span, both ends
+// inclusive.
 //
-// end is the Location one past the last one wanted; an End Location whose
-// Object is 0 asks for the whole of that Group.
-func (s *Session) Fetch(ctx context.Context, namespace []string, track string, start, end Location, opts ...FetchOption) (*FetchStream, error) {
-	return s.fetch(ctx, &wire2.Fetch{
+// On a draft-18 session the range has to be explicit, so a relative start or
+// the Next Object cannot be sent and fail here; an open end becomes "through
+// the last Group there could be", which the publisher clamps to what it has.
+func (s *Session) Fetch(ctx context.Context, namespace []string, track string, filter LocationFilter, opts ...FetchOption) (*FetchStream, error) {
+	msg := &wire2.Fetch{
 		FetchType:      wire2.FetchTypeStandalone,
 		TrackNamespace: namespaceFields(namespace),
 		TrackName:      []byte(track),
-		StartLocation:  start,
-		EndLocation:    end,
-	}, opts...)
+		Parameters:     wire2.Parameters{},
+	}
+	if s.version == wire2.Version18 {
+		start, end, err := wire2.V18FetchRange(filter)
+		if err != nil {
+			return nil, err
+		}
+		msg.StartLocation, msg.EndLocation = start, end
+	} else if filter.Type != LocationFilterNone {
+		msg.Parameters = append(msg.Parameters, wire2.LocationFilterParameter(filter))
+	}
+	return s.fetch(ctx, msg, opts...)
 }
 
 // FetchRelative asks for the Objects immediately before a subscription's
-// starting point, going back groupsBack Groups.
+// starting point, going back groupsBack Groups, with a draft-18 Joining
+// FETCH.
 //
 // The publisher works the range out from the subscription, so what the fetch
 // retrieves and what the subscription delivers are contiguous and do not
-// overlap.
+// overlap. Draft-22 has no Joining FETCH -- a subscription asks for its fill
+// itself -- so on a draft-22 session this returns ErrNotInThisDraft.
 func (s *Session) FetchRelative(ctx context.Context, subscription *RemoteTrack, groupsBack uint64, opts ...FetchOption) (*FetchStream, error) {
+	if s.version != wire2.Version18 {
+		return nil, errJoiningFetchNotInDraft
+	}
 	return s.fetch(ctx, &wire2.Fetch{
 		FetchType: wire2.FetchTypeRelativeJoining,
 		Joining: &wire2.JoiningFetch{
@@ -583,8 +675,12 @@ func (s *Session) FetchRelative(ctx context.Context, subscription *RemoteTrack, 
 }
 
 // FetchAbsolute asks for the Objects from an explicit Group up to a
-// subscription's starting point.
+// subscription's starting point, with a draft-18 Joining FETCH. Like
+// FetchRelative it returns ErrNotInThisDraft on a draft-22 session.
 func (s *Session) FetchAbsolute(ctx context.Context, subscription *RemoteTrack, startGroup uint64, opts ...FetchOption) (*FetchStream, error) {
+	if s.version != wire2.Version18 {
+		return nil, errJoiningFetchNotInDraft
+	}
 	return s.fetch(ctx, &wire2.Fetch{
 		FetchType: wire2.FetchTypeAbsoluteJoining,
 		Joining: &wire2.JoiningFetch{
@@ -596,7 +692,9 @@ func (s *Session) FetchAbsolute(ctx context.Context, subscription *RemoteTrack, 
 
 func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOption) (*FetchStream, error) {
 	msg.RequestID = s.requestIDs.nextID()
-	msg.Parameters = wire2.Parameters{}
+	if msg.Parameters == nil {
+		msg.Parameters = wire2.Parameters{}
+	}
 	for _, opt := range opts {
 		if err := opt(msg); err != nil {
 			return nil, err
@@ -648,8 +746,8 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 }
 
 // newFetchRequest builds an incoming FETCH, resolving a Joining FETCH against
-// the subscription it names. A range that cannot be resolved comes back as the
-// REQUEST_ERROR code the draft prescribes.
+// the subscription it names. A range that cannot be resolved, or that uses
+// Range Filters, comes back as the REQUEST_ERROR code the draft prescribes.
 func newFetchRequest(rs *requestStream, session fetchSession, msg *wire2.Fetch) (*FetchRequest, error) {
 	order, present, err := msg.Parameters.GroupOrder()
 	if err != nil {
@@ -673,14 +771,25 @@ func newFetchRequest(rs *requestStream, session fetchSession, msg *wire2.Fetch) 
 		req.joiningRequestID = msg.Joining.JoiningRequestID
 	}
 
-	if msg.FetchType == wire2.FetchTypeStandalone {
-		req.namespace = namespaceStrings(msg.TrackNamespace)
-		req.track = string(msg.TrackName)
-		req.start = msg.StartLocation
-		req.end = msg.EndLocation
+	if msg.Parameters.HasRangeFilter() {
+		return req, &fetchRangeError{code: RequestErrorInvalidFilter, reason: "range filters are not supported"}
+	}
+
+	if msg.FetchType != wire2.FetchTypeStandalone {
+		return req, resolveJoiningFetch(req, session, msg)
+	}
+	req.namespace = namespaceStrings(msg.TrackNamespace)
+	req.track = string(msg.TrackName)
+	if rs.version != wire2.Version18 {
+		req.filter, _ = msg.Parameters.LocationFilter()
 		return req, nil
 	}
-	return req, resolveJoiningFetch(req, session, msg)
+	filter, err := wire2.FetchFilterFromV18(msg.StartLocation, msg.EndLocation)
+	if err != nil {
+		return req, &fetchRangeError{code: RequestErrorInvalidRange, reason: err.Error()}
+	}
+	req.filter = filter
+	return req, nil
 }
 
 // resolveJoiningFetch turns a Joining FETCH into a range, using the Joining
@@ -709,11 +818,8 @@ func resolveJoiningFetch(req *FetchRequest, session fetchSession, msg *wire2.Fet
 
 	req.namespace = sub.Namespace()
 	req.track = sub.Track()
-	// The last Object the fetch returns is the one at the Joining Location, so
-	// the End Location is one past it -- which is what makes the fetch and the
-	// subscription contiguous without overlapping.
-	req.end = Location{Group: joining.Group, Object: joining.Object + 1}
 
+	var start Location
 	switch msg.FetchType {
 	case wire2.FetchTypeRelativeJoining:
 		if msg.Joining.JoiningStart > joining.Group {
@@ -722,7 +828,7 @@ func resolveJoiningFetch(req *FetchRequest, session fetchSession, msg *wire2.Fet
 				reason: "the joining start is before the beginning of the track",
 			}
 		}
-		req.start = Location{Group: joining.Group - msg.Joining.JoiningStart}
+		start = Location{Group: joining.Group - msg.Joining.JoiningStart}
 	case wire2.FetchTypeAbsoluteJoining:
 		if msg.Joining.JoiningStart > joining.Group {
 			return &fetchRangeError{
@@ -730,8 +836,12 @@ func resolveJoiningFetch(req *FetchRequest, session fetchSession, msg *wire2.Fet
 				reason: "the joining start is after the joining location",
 			}
 		}
-		req.start = Location{Group: msg.Joining.JoiningStart}
+		start = Location{Group: msg.Joining.JoiningStart}
 	}
+	// The last Object the fetch returns is the one at the Joining Location,
+	// which is what makes the fetch and the subscription contiguous without
+	// overlapping.
+	req.filter = AbsoluteRange(start, joining)
 	return nil
 }
 
@@ -800,6 +910,10 @@ func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) 
 var ErrFetchComplete = errors.New("fetch response complete")
 
 var (
+	// errJoiningFetchNotInDraft refuses a Joining FETCH on a draft-22
+	// session, where the subscription asks for its own fill instead.
+	errJoiningFetchNotInDraft = fmt.Errorf("%w: joining FETCH, replaced by fill in draft-20", ErrNotInThisDraft)
+
 	errFetchResponseClosed = errors.New("fetch response is closed")
 	errFetchClosedLocally  = errors.New("fetch cancelled by the application")
 )
