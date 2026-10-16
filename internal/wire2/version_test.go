@@ -34,7 +34,6 @@ func TestVersionFromALPN(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, Version22, v)
 
-
 	// Drafts we deliberately do not speak, and nonsense, are both rejected:
 	// with no version field in SETUP there is no in-band way to recover.
 	for _, alpn := range []string{"moqt-16", "moqt-20", "moqt-21", "moq-00", "h3", ""} {
