@@ -540,15 +540,22 @@ func (f *FetchStream) drained() (*FetchObject, error) {
 // A completed fetch has nothing left to exchange on its request stream either,
 // but it can only be torn down once the answer has arrived: FETCH_OK may come
 // after the last Object.
+//
+// "Arrived" means established is closed, not that the answer has been
+// recorded: between the two, a cancel here would end the request before
+// awaitEstablished could see the answer, and Fetch would fail with
+// ErrFetchComplete. Whichever of this and finishIfComplete runs second does
+// the cancel.
 func (f *FetchStream) responseComplete(complete bool) {
 	f.mu.Lock()
 	f.dataDone = complete
-	answered := f.answered || f.answerErr != nil
 	f.mu.Unlock()
 
 	f.responseOnce.Do(func() { close(f.responseDone) })
-	if answered {
+	select {
+	case <-f.established:
 		f.cancel(StreamErrorCancelled, ErrFetchComplete)
+	default:
 	}
 }
 
