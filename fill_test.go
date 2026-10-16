@@ -334,6 +334,9 @@ func TestFillEndsWithTheSubscription(t *testing.T) {
 				}
 				_ = response.WriteObject(Object{GroupID: 0, ObjectID: 0, Priority: 1, Payload: []byte("a")})
 				<-r.Context().Done()
+				// The context ends as the library starts tearing the
+				// subscription down; let it finish before writing.
+				synctest.Wait()
 				writeAfterCancel <- response.WriteObject(Object{GroupID: 1, ObjectID: 0, Priority: 1, Payload: []byte("b")})
 			}),
 		}
