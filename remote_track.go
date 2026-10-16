@@ -121,6 +121,10 @@ type RemoteTrack struct {
 	fill  *FillStream
 	fills []*FillStream
 
+	// updateMu serializes REQUEST_UPDATEs, so their slots in pendingUpdates
+	// are in the order they go out, without holding mu across the write.
+	updateMu sync.Mutex
+
 	// states carries PUBLISH_STATE_NOTIFYs to the application. Like
 	// Subscription.Updates it is created on first ask, written only by the
 	// request stream's reader goroutine, and closed by it when the stream
@@ -345,36 +349,51 @@ func (t *RemoteTrack) Update(opts ...SubscribeUpdateOption) error {
 // update sends a REQUEST_UPDATE carrying params. newFill, when set, makes the
 // fill the update asks for once its Request ID is known.
 func (t *RemoteTrack) update(params wire2.Parameters, newFill func(requestID uint64) *FillStream) error {
+	t.updateMu.Lock()
+	defer t.updateMu.Unlock()
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if limit := t.session.peerMaxRequestUpdates(); limit > 0 && uint64(len(t.pendingUpdates)) >= limit {
+		t.mu.Unlock()
 		return ErrTooManyRequestUpdates
 	}
-
 	// The Request ID is allocated only once the update is going out, so an
-	// update refused above leaves no hole in the sequence. Holding the lock
-	// across the write keeps the slots in the order the updates are sent.
+	// update refused above leaves no hole in the sequence.
 	update := &wire2.RequestUpdate{RequestID: t.session.nextRequestID(), Parameters: params}
 	var fill *FillStream
 	if newFill != nil {
 		fill = newFill(update.RequestID)
-		t.session.registerFetchReceiver(update.RequestID, fill)
-	}
-	if err := t.write(update); err != nil {
-		if fill != nil {
-			t.session.unregisterFetchReceiver(update.RequestID)
-		}
-		return err
-	}
-	t.pendingUpdates = append(t.pendingUpdates, fill)
-	if fill != nil {
 		t.fills = append(t.fills, fill)
 	}
+	// The slot is taken, and what we asked for recorded, before the write:
+	// the answer can arrive before the write returns, and a fill is resolved
+	// against the state it finds then. A failed write leaves the stream, and
+	// with it the subscription, unusable, so the state is not rolled back.
+	t.pendingUpdates = append(t.pendingUpdates, fill)
 	if forward, ok := params.Get(wire2.ParamForward); ok {
 		t.paused = forward.Number == 0
 	}
 	if f, ok := params.LocationFilter(); ok {
 		t.filter, t.hasFilter = activeFilter(f, true)
+	}
+	t.mu.Unlock()
+
+	if fill != nil {
+		t.session.registerFetchReceiver(update.RequestID, fill)
+	}
+	if err := t.write(update); err != nil {
+		t.mu.Lock()
+		// updateMu keeps this update's slot the last one.
+		t.pendingUpdates = t.pendingUpdates[:len(t.pendingUpdates)-1]
+		if fill != nil {
+			t.fills = t.fills[:len(t.fills)-1]
+		}
+		t.mu.Unlock()
+		if fill != nil {
+			t.session.unregisterFetchReceiver(update.RequestID)
+			fill.finish(false, err)
+		}
+		return err
 	}
 	return nil
 }
