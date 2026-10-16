@@ -62,7 +62,7 @@ func TestSubgroupWriteAndReceive(t *testing.T) {
 		Priority:       200,
 	}
 
-	sg, err := newSubgroup(stream, header, qlogger{})
+	sg, err := newSubgroup(stream, header, qlogger{}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(7), sg.GroupID())
 	assert.Equal(t, uint64(2), sg.SubgroupID())
@@ -99,7 +99,7 @@ func TestSubgroupInheritsSubscriptionPriority(t *testing.T) {
 		TrackAlias:      1,
 		GroupID:         0,
 		DefaultPriority: true,
-	}, qlogger{})
+	}, qlogger{}, nil)
 	require.NoError(t, err)
 	_, err = sg.WriteObject(0, []byte("x"))
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestSubgroupProperties(t *testing.T) {
 	props := KVPList{{Type: wire2.PropertyPriorObjectIDGap, ValueVarInt: 4}}
 
 	stream, capture := newSendCapture(t)
-	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1, HasProperties: true}, qlogger{})
+	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1, HasProperties: true}, qlogger{}, nil)
 	require.NoError(t, err)
 	_, err = sg.WriteObjectWithProperties(0, props, []byte("x"))
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestSubgroupProperties(t *testing.T) {
 	// The PROPERTIES bit is in the header and covers the whole stream, so a
 	// subgroup opened without it cannot carry them on any object.
 	plain, _ := newSendCapture(t)
-	sg, err = newSubgroup(plain, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{})
+	sg, err = newSubgroup(plain, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{}, nil)
 	require.NoError(t, err)
 	_, err = sg.WriteObjectWithProperties(0, props, []byte("x"))
 	assert.Error(t, err)
@@ -138,7 +138,7 @@ func TestSubgroupProperties(t *testing.T) {
 // kept distinct and neither happens twice.
 func TestSubgroupCloseAndReset(t *testing.T) {
 	stream, capture := newSendCapture(t)
-	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{})
+	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{}, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, sg.Close())
@@ -153,7 +153,7 @@ func TestSubgroupCloseAndReset(t *testing.T) {
 	assert.Empty(t, capture.resets, "a finished subgroup is not reset afterwards")
 
 	stream, capture = newSendCapture(t)
-	sg, err = newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{})
+	sg, err = newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{}, nil)
 	require.NoError(t, err)
 	sg.Reset(StreamErrorDeliveryTimeout)
 	sg.Reset(StreamErrorCancelled)
@@ -166,7 +166,7 @@ func TestSubgroupCloseAndReset(t *testing.T) {
 // the subgroup is complete.
 func TestSubgroupReceiveStreamError(t *testing.T) {
 	stream, capture := newSendCapture(t)
-	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{})
+	sg, err := newSubgroup(stream, &wire2.SubgroupHeader{TrackAlias: 1}, qlogger{}, nil)
 	require.NoError(t, err)
 	_, err = sg.WriteObject(0, []byte("x"))
 	require.NoError(t, err)

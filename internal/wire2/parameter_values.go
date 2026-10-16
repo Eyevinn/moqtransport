@@ -39,6 +39,29 @@ func (pp Parameters) FillTimeout() (time.Duration, bool) {
 	return millis(p.Number), true
 }
 
+// rangeFilterTypes are draft-22's five Range Filter parameters (Section
+// 3.3.2).
+var rangeFilterTypes = []uint64{
+	ParamSubgroupFilter, ParamObjectIDFilter, ParamPriorityFilter,
+	ParamObjectPropertyFilter, ParamTrackPropertyFilter,
+}
+
+// HasRangeFilter reports whether the block, or a FILL_PARAMETERS inside it,
+// carries a Range Filter.
+func (pp Parameters) HasRangeFilter() bool {
+	for _, p := range pp {
+		if p.Type == ParamFillParameters && p.Params.HasRangeFilter() {
+			return true
+		}
+		for _, typ := range rangeFilterTypes {
+			if p.Type == typ {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IncludeProperties returns the INCLUDE_PROPERTIES parameter, defaulting to
 // true when it is absent (draft-22 Section 9.20.21).
 func (pp Parameters) IncludeProperties() (bool, error) {

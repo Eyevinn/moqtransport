@@ -334,6 +334,14 @@ func TestRangeFiltersRepeat(t *testing.T) {
 	assert.Equal(t, params, got)
 }
 
+func TestHasRangeFilter(t *testing.T) {
+	assert.False(t, Parameters{Uint8Parameter(ParamForward, 1)}.HasRangeFilter())
+	assert.True(t, Parameters{BytesParameter(ParamPriorityFilter, nil)}.HasRangeFilter())
+	assert.True(t, Parameters{FillParametersParameter(Parameters{BytesParameter(ParamObjectIDFilter, nil)})}.HasRangeFilter(),
+		"a fill inherits the subscription's filters and may carry its own")
+	assert.False(t, Parameters{FillParametersParameter(nil)}.HasRangeFilter())
+}
+
 func TestIncludeProperties(t *testing.T) {
 	include, err := Parameters{}.IncludeProperties()
 	require.NoError(t, err)

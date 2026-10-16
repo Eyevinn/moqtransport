@@ -3,7 +3,7 @@ package moqtransport
 import "fmt"
 
 // SessionErrorCode is the code an endpoint closes the whole session with
-// (draft-ietf-moq-transport-18, Section 15.10.1).
+// (draft-ietf-moq-transport-18 Section 15.10.1, draft-22 Section 16.11.1).
 //
 // It is the most serious of the four registries: where a REQUEST_ERROR ends
 // one request and a stream reset ends one stream, these end the connection.
@@ -51,7 +51,7 @@ const (
 	// SessionErrorVersionNegotiationFailed means no common version was found.
 	// From draft-17 that is settled by ALPN before any MOQT byte is written,
 	// so reaching this means the transport handed us a version we do not
-	// implement.
+	// implement. Draft-19 removed the code; draft-22 has no 0x15.
 	SessionErrorVersionNegotiationFailed SessionErrorCode = 0x15
 	// SessionErrorMalformedAuthToken means an auth token could not be parsed.
 	SessionErrorMalformedAuthToken SessionErrorCode = 0x16
@@ -66,6 +66,10 @@ const (
 	// SessionErrorMalformedAuthority means the AUTHORITY Setup Option could
 	// not be parsed.
 	SessionErrorMalformedAuthority SessionErrorCode = 0x1A
+	// SessionErrorTooManyRequestUpdates means the peer sent a REQUEST_UPDATE
+	// on a stream that already had MAX_REQUEST_UPDATES unanswered ones.
+	// Draft-22 only.
+	SessionErrorTooManyRequestUpdates SessionErrorCode = 0x1B
 )
 
 func (c SessionErrorCode) String() string {
@@ -110,6 +114,8 @@ func (c SessionErrorCode) String() string {
 		return "INVALID_AUTHORITY"
 	case SessionErrorMalformedAuthority:
 		return "MALFORMED_AUTHORITY"
+	case SessionErrorTooManyRequestUpdates:
+		return "TOO_MANY_REQUEST_UPDATES"
 	}
 	return unregisteredCode("session error", uint64(c))
 }

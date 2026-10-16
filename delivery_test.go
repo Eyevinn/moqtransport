@@ -20,7 +20,7 @@ import (
 // PUBLISH_DONE overtaking the object still on its subgroup stream. Both must
 // now be deterministic: Subscribe succeeds, the object arrives, then the end.
 func TestSubscribeFastEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 				sub, err := r.Accept(WithLargestObject(Location{Group: 1, Object: 0}))
@@ -37,7 +37,7 @@ func TestSubscribeFastEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -64,7 +64,7 @@ func TestSubscribeFastEnd(t *testing.T) {
 // SubgroupReset for a reset -- and the header's END_OF_GROUP bit reaches
 // every Object.
 func TestSubgroupEndEvents(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		published := make(chan *Subscription, 2)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -76,7 +76,7 @@ func TestSubgroupEndEvents(t *testing.T) {
 			}),
 		}
 		client := &Session{SubgroupEndEvents: true}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -130,7 +130,7 @@ func TestSubgroupEndEvents(t *testing.T) {
 // TestSubgroupEndEventsOffByDefault: without the session flag, subgroup ends
 // stay silent, exactly as before.
 func TestSubgroupEndEventsOffByDefault(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 				sub, err := r.Accept()
@@ -147,7 +147,7 @@ func TestSubgroupEndEventsOffByDefault(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -165,7 +165,7 @@ func TestSubgroupEndEventsOffByDefault(t *testing.T) {
 // TestFetchTrackProperties: the FETCH_OK's Track Properties are readable on
 // the FetchStream, so a proxying relay can forward them.
 func TestFetchTrackProperties(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		props := KVPList{{Type: wire2.PropertyDefaultPublisherPriority, ValueVarInt: 42}}
 		server := &Session{
 			FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
@@ -178,13 +178,12 @@ func TestFetchTrackProperties(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		fs, err := client.Fetch(ctx, []string{"fetch"}, "track",
-			Location{Group: 0, Object: 0}, Location{Group: 0, Object: 1})
+		fs, err := client.Fetch(ctx, []string{"fetch"}, "track", AbsoluteRange(Location{}, Location{}))
 		require.NoError(t, err)
 		assert.Equal(t, props, fs.TrackProperties())
 		assert.True(t, fs.EndOfTrack())
@@ -206,11 +205,11 @@ func (c *countingQlogHandler) Log(qlog.Event) { c.events.Add(1) }
 // TestQlogHandlerInterface: any QlogHandler can stand in for *qlog.Logger and
 // sees the session's events before serialization.
 func TestQlogHandlerInterface(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		counter := &countingQlogHandler{}
 		client := &Session{Qlogger: counter}
 		server := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -225,7 +224,7 @@ func TestQlogHandlerInterface(t *testing.T) {
 // accepts and closes an empty response in one breath completes the fetch
 // while FETCH_OK is still being awaited, and the answer must win.
 func TestFetchFastEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
 				response, err := r.Accept()
@@ -236,14 +235,14 @@ func TestFetchFastEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		for range 40 {
 			fetch, err := client.Fetch(ctx, []string{"fast"}, "track",
-				Location{}, Location{Group: 1})
+				AbsoluteRange(Location{}, Location{Object: MaxObjectID}))
 			require.NoError(t, err, "FETCH_OK must win over the response completing")
 			_, err = fetch.ReadObject(ctx)
 			require.ErrorIs(t, err, ErrFetchComplete)
@@ -256,7 +255,7 @@ func TestFetchFastEnd(t *testing.T) {
 // rather than holding the subscription open forever. Under synctest the
 // grace second is fake time, so the test is instant and the timing exact.
 func TestPublishDoneGraceTimeout(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		published := make(chan *Subscription, 1)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -268,7 +267,7 @@ func TestPublishDoneGraceTimeout(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

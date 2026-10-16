@@ -248,22 +248,22 @@ func (h *moqHandler) handleFetch(r *moqtransport.FetchRequest) {
 		_ = r.Reject(moqtransport.RequestErrorDoesNotExist, "unknown track")
 		return
 	}
-	start, end := r.Range()
+	// The clock's Largest Object is this second's, the only Object in its
+	// Group. Resolving against it is what turns a relative or open-ended
+	// request into Groups, and it clamps the end to now.
 	now := uint64(time.Now().Unix())
-
-	// End Location is one past the last wanted Location, except that an Object
-	// of 0 asks for the whole of that Group (Section 10.12.1). Either way, with
-	// one Object per Group the last Group wanted is end.Group.
-	if end.Group < start.Group || end.Group-start.Group > maxFetchGroups {
+	rng, ok := r.Range(moqtransport.Location{Group: now}, true)
+	if !ok {
+		_ = r.Reject(moqtransport.RequestErrorInvalidRange, "that range is in the future")
+		return
+	}
+	if rng.End.Group-rng.Start.Group > maxFetchGroups {
 		_ = r.Reject(moqtransport.RequestErrorInvalidRange,
 			fmt.Sprintf("at most %d seconds can be fetched at once", maxFetchGroups))
 		return
 	}
-	if start.Group > now {
-		_ = r.Reject(moqtransport.RequestErrorInvalidRange, "that range is in the future")
-		return
-	}
 
+	// FETCH_OK reports the resolved range's end, which Range recorded.
 	response, err := r.Accept()
 	if err != nil {
 		log.Printf("accepting fetch failed: %v", err)
@@ -274,14 +274,14 @@ func (h *moqHandler) handleFetch(r *moqtransport.FetchRequest) {
 	// names, so both look the same from here.
 	if joining, ok := r.Joining(); ok {
 		log.Printf("serving joining fetch for subscription %d: groups %d..%d",
-			joining, start.Group, end.Group)
+			joining, rng.Start.Group, rng.End.Group)
 	} else {
-		log.Printf("serving fetch for groups %d..%d", start.Group, end.Group)
+		log.Printf("serving fetch for groups %d..%d", rng.Start.Group, rng.End.Group)
 	}
 
-	for group := start.Group; group <= end.Group && group <= now; group++ {
+	for group := rng.Start.Group; group <= rng.End.Group; group++ {
 		// A Start Location past the only Object in its Group excludes it.
-		if group == start.Group && start.Object > 0 {
+		if !rng.Contains(moqtransport.Location{Group: group}) {
 			continue
 		}
 		if err := response.WriteObject(moqtransport.Object{
@@ -327,9 +327,10 @@ func (h *moqHandler) handlePublishNamespace(r *moqtransport.PublishNamespaceRequ
 func (h *moqHandler) fetchHistory(ctx context.Context, session *moqtransport.Session) {
 	now := time.Now().Unix()
 	start := moqtransport.Location{Group: uint64(now - int64(h.fetch))}
-	end := moqtransport.Location{Group: uint64(now - 1)}
+	// Through the whole of the previous second's Group.
+	end := moqtransport.Location{Group: uint64(now - 1), Object: moqtransport.MaxObjectID}
 
-	fetch, err := session.Fetch(ctx, h.namespace, h.trackname, start, end)
+	fetch, err := session.Fetch(ctx, h.namespace, h.trackname, moqtransport.AbsoluteRange(start, end))
 	if err != nil {
 		log.Printf("fetch failed: %v", err)
 		return

@@ -30,6 +30,9 @@ func TestErrorRegistriesDoNotShareValues(t *testing.T) {
 func TestErrorCodeStrings(t *testing.T) {
 	assert.Equal(t, "DOES_NOT_EXIST", RequestErrorDoesNotExist.String())
 	assert.Equal(t, "SUBSCRIPTION_ENDED", PublishDoneSubscriptionEnded.String())
+	assert.Equal(t, "INVALID_FILTER", RequestErrorInvalidFilter.String())
+	assert.Equal(t, "CONFLICTING_FILTERS", RequestErrorConflictingFilters.String())
+	assert.Equal(t, "TOO_MANY_REQUEST_UPDATES", SessionErrorTooManyRequestUpdates.String())
 
 	assert.Contains(t, RequestErrorCode(0x99).String(), "unknown request error code")
 	assert.Contains(t, PublishDoneCode(0x99).String(), "unknown publish done code")

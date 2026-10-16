@@ -3,15 +3,15 @@ package moqtransport
 import (
 	"context"
 	"testing"
-	"testing/synctest"
 	"time"
 
+	"github.com/Eyevinn/moqtransport/internal/wire2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPublishNamespaceEndToEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		announced := make(chan *PublishNamespaceRequest, 1)
 		server := &Session{
 			PublishNamespaceHandler: PublishNamespaceHandlerFunc(func(r *PublishNamespaceRequest) {
@@ -22,7 +22,7 @@ func TestPublishNamespaceEndToEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -46,14 +46,14 @@ func TestPublishNamespaceEndToEnd(t *testing.T) {
 }
 
 func TestPublishNamespaceRejected(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			PublishNamespaceHandler: PublishNamespaceHandlerFunc(func(r *PublishNamespaceRequest) {
 				_ = r.Reject(RequestErrorUninterested, "not interested")
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -66,9 +66,9 @@ func TestPublishNamespaceRejected(t *testing.T) {
 }
 
 func TestPublishNamespaceWithoutHandler(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		client, server := &Session{}, &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -83,7 +83,7 @@ func TestPublishNamespaceWithoutHandler(t *testing.T) {
 // The wire carries only the part of a namespace after the subscription's
 // prefix, so the two ends have to agree on where the prefix stops.
 func TestSubscribeNamespaceEndToEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		announcers := make(chan *NamespaceAnnouncer, 1)
 		server := &Session{
 			SubscribeNamespaceHandler: SubscribeNamespaceHandlerFunc(func(r *SubscribeNamespaceRequest) {
@@ -95,7 +95,7 @@ func TestSubscribeNamespaceEndToEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -139,7 +139,7 @@ func TestSubscribeNamespaceEndToEnd(t *testing.T) {
 // A namespace outside the prefix cannot be expressed on the wire, since only
 // the suffix is sent.
 func TestNamespaceAnnouncerRejectsForeignNamespace(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		announcers := make(chan *NamespaceAnnouncer, 1)
 		server := &Session{
 			SubscribeNamespaceHandler: SubscribeNamespaceHandlerFunc(func(r *SubscribeNamespaceRequest) {
@@ -151,7 +151,7 @@ func TestNamespaceAnnouncerRejectsForeignNamespace(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -168,14 +168,14 @@ func TestNamespaceAnnouncerRejectsForeignNamespace(t *testing.T) {
 // Two namespace subscriptions in one session may not share a common prefix,
 // and the library enforces it rather than leaving it to the handler.
 func TestSubscribeNamespacePrefixOverlap(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			SubscribeNamespaceHandler: SubscribeNamespaceHandlerFunc(func(r *SubscribeNamespaceRequest) {
 				_, _ = r.Accept()
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

@@ -6,7 +6,8 @@ import (
 	"github.com/Eyevinn/moqtransport/internal/wire2"
 )
 
-// The draft-18 error registries.
+// The draft-18 and draft-22 error registries. They differ only by a few
+// codes, each marked with the draft it belongs to.
 //
 // draft-18 replaced the per-message error tables -- SUBSCRIBE_ERROR,
 // FETCH_ERROR, ANNOUNCE_ERROR and the rest -- with one registry shared by
@@ -21,7 +22,8 @@ import (
 // errors.go, which go with the draft-14/16 session layer.
 
 // RequestErrorCode is the reason a request was rejected, carried in
-// REQUEST_ERROR (draft-ietf-moq-transport-18, Section 15.10.2).
+// REQUEST_ERROR (draft-ietf-moq-transport-18 Section 15.10.2, draft-22
+// Section 16.11.2).
 type RequestErrorCode uint64
 
 const (
@@ -51,7 +53,8 @@ const (
 	// RequestErrorMalformedTrack means the track violates the object model.
 	RequestErrorMalformedTrack RequestErrorCode = 0x12
 	// RequestErrorDuplicateSubscription means an equivalent subscription is
-	// already established.
+	// already established. Draft-18 only: draft-19 allows several
+	// subscriptions to one track.
 	RequestErrorDuplicateSubscription RequestErrorCode = 0x19
 	// RequestErrorUninterested means the receiver does not want what was
 	// offered, in response to a PUBLISH or PUBLISH_NAMESPACE.
@@ -63,7 +66,8 @@ const (
 	// endpoint accepts.
 	RequestErrorNamespaceTooLarge RequestErrorCode = 0x31
 	// RequestErrorInvalidJoiningRequestID means a Joining FETCH named a
-	// Request ID that is not a subscription it can join.
+	// Request ID that is not a subscription it can join. Draft-18 only, like
+	// the Joining FETCH itself.
 	RequestErrorInvalidJoiningRequestID RequestErrorCode = 0x32
 	// RequestErrorUnsupportedExtension means the track carries a Mandatory
 	// Track Property the endpoint does not understand, so it cannot serve or
@@ -72,6 +76,14 @@ const (
 	// RequestErrorRedirect means the request should be retried elsewhere; the
 	// REQUEST_ERROR carries the destination.
 	RequestErrorRedirect RequestErrorCode = 0x34
+	// RequestErrorConflictingFilters means the request's filters cannot be
+	// satisfied together. Draft-22 only.
+	RequestErrorConflictingFilters RequestErrorCode = 0x35
+	// RequestErrorInvalidFilter means a Range Filter was malformed, repeated,
+	// or more than MAX_FILTER_RANGES allows -- which, since this
+	// implementation advertises none, is any Range Filter at all. Draft-22
+	// only.
+	RequestErrorInvalidFilter RequestErrorCode = 0x36
 )
 
 func (c RequestErrorCode) String() string {
@@ -112,6 +124,10 @@ func (c RequestErrorCode) String() string {
 		return "UNSUPPORTED_EXTENSION"
 	case RequestErrorRedirect:
 		return "REDIRECT"
+	case RequestErrorConflictingFilters:
+		return "CONFLICTING_FILTERS"
+	case RequestErrorInvalidFilter:
+		return "INVALID_FILTER"
 	}
 	return unregisteredCode("request error", uint64(c))
 }
@@ -130,7 +146,8 @@ const (
 	// subscription to it would deliver anything either.
 	PublishDoneTrackEnded PublishDoneCode = 0x2
 	// PublishDoneSubscriptionEnded means this subscription reached its end,
-	// while the track continues.
+	// while the track continues. Draft-18 only: from draft-19 a subscription
+	// does not end because Largest Object passes the end of its filter.
 	PublishDoneSubscriptionEnded PublishDoneCode = 0x3
 	// PublishDoneGoingAway means the publisher is shutting down or migrating.
 	PublishDoneGoingAway PublishDoneCode = 0x4

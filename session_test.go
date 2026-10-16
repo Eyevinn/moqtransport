@@ -11,12 +11,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runSessions brings up both ends of a session pair. Neither Run can finish
-// alone: each waits for the peer's SETUP, and Section 3.3 gives the handshake
-// no client/server ordering to rely on.
+// runSessions brings up both ends of a session pair speaking draft-18.
 func runSessions(t *testing.T, client, server *Session) {
 	t.Helper()
-	clientConn, serverConn := newMemConnPair(wire2.Version18.ALPN())
+	runSessionsVersion(t, wire2.Version18, client, server)
+}
+
+// testVersions are the drafts the end-to-end tests run against.
+var testVersions = []wire2.Version{wire2.Version18, wire2.Version22}
+
+// forEachVersion runs test once per draft, each under synctest, as a subtest
+// named for the draft's ALPN.
+func forEachVersion(t *testing.T, test func(t *testing.T, version wire2.Version)) {
+	t.Helper()
+	for _, v := range testVersions {
+		t.Run(v.ALPN(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) { test(t, v) })
+		})
+	}
+}
+
+// runSessionsVersion brings up both ends of a session pair speaking version.
+// Neither Run can finish alone: each waits for the peer's SETUP, and Section
+// 3.3 gives the handshake no client/server ordering to rely on.
+func runSessionsVersion(t *testing.T, version wire2.Version, client, server *Session) {
+	t.Helper()
+	clientConn, serverConn := newMemConnPair(version.ALPN())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -34,13 +54,13 @@ func runSessions(t *testing.T, client, server *Session) {
 }
 
 func TestSessionHandshake(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		client := &Session{Implementation: "test/client"}
 		server := &Session{Implementation: "test/server"}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
-		assert.Equal(t, wire2.Version18, client.Version())
-		assert.Equal(t, wire2.Version18, server.Version())
+		assert.Equal(t, version, client.Version())
+		assert.Equal(t, version, server.Version())
 		assert.NoError(t, client.Context().Err())
 		assert.NoError(t, server.Context().Err())
 	})
@@ -93,7 +113,7 @@ func TestSessionRejectsUnknownALPN(t *testing.T) {
 // The whole stack end to end: a SUBSCRIBE, its answer, Objects on a subgroup
 // stream and in a datagram, and PUBLISH_DONE.
 func TestSessionSubscribeEndToEnd(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		published := make(chan *Subscription, 1)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -112,7 +132,7 @@ func TestSessionSubscribeEndToEnd(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -186,7 +206,7 @@ func TestSessionSubscribeEndToEnd(t *testing.T) {
 // The publisher's DEFAULT_PUBLISHER_PRIORITY applies to Objects whose stream
 // left the priority off the wire.
 func TestSessionInheritsPublisherPriority(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		published := make(chan *Subscription, 1)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -200,7 +220,7 @@ func TestSessionInheritsPublisherPriority(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -222,14 +242,14 @@ func TestSessionInheritsPublisherPriority(t *testing.T) {
 }
 
 func TestSessionSubscribeRejected(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
 				_ = r.Reject(RequestErrorDoesNotExist, "no such track")
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -244,9 +264,9 @@ func TestSessionSubscribeRejected(t *testing.T) {
 
 // With no handler the peer gets NOT_SUPPORTED rather than silence.
 func TestSessionSubscribeWithoutHandler(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		client, server := &Session{}, &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -261,7 +281,7 @@ func TestSessionSubscribeWithoutHandler(t *testing.T) {
 // draft-18 has no UNSUBSCRIBE: the subscriber resets its request stream, and
 // the publisher's only notice is its request context ending.
 func TestSessionUnsubscribeCancelsThePublisher(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		gone := make(chan error, 1)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -273,7 +293,7 @@ func TestSessionUnsubscribeCancelsThePublisher(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -294,7 +314,7 @@ func TestSessionUnsubscribeCancelsThePublisher(t *testing.T) {
 // A REQUEST_UPDATE travels on the subscription's own stream and is reported to
 // the publisher after the library has applied and answered it.
 func TestSessionSubscriptionUpdate(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		published := make(chan *Subscription, 1)
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -306,7 +326,7 @@ func TestSessionSubscriptionUpdate(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -348,7 +368,7 @@ func TestSessionSubscriptionUpdate(t *testing.T) {
 // Each REQUEST_UPDATE consumes a Request ID (Section 10.1), so one that reuses
 // the ID of the subscription it updates is a duplicate, and the session ends.
 func TestSessionRejectsReusedUpdateRequestID(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
 		accepted := make(chan struct{})
 		server := &Session{
 			SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
@@ -358,7 +378,7 @@ func TestSessionRejectsReusedUpdateRequestID(t *testing.T) {
 			}),
 		}
 		client := &Session{}
-		runSessions(t, client, server)
+		runSessionsVersion(t, version, client, server)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

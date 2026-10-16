@@ -30,13 +30,17 @@ func (v Version) String() string {
 	return v.ALPN()
 }
 
-// supportedVersions lists what this build speaks, most preferred first. Order
+// knownVersions are the drafts this build has codecs for. A peer negotiating
+// any of them gets a session, whether or not it is offered.
+var knownVersions = []Version{Version22, Version18}
+
+// supportedVersions lists what this build offers, most preferred first. Order
 // matters: it is the offer order in NextProtos, and Go's TLS server picks the
 // first of its own protocols the client also offers. Adding a draft means
-// adding a declaration set and one entry here.
+// adding a declaration set, an entry in knownVersions, and one here.
 //
-// Version22 has its codecs but is not offered yet: the session layer does not
-// speak it.
+// Version22 is known but not offered yet: fill fetch, which replaces the
+// joining FETCH applications use to join a track, is not in place.
 var supportedVersions = []Version{Version18}
 
 // AtLeast reports whether v is draft n or later. Behavior that changed between
@@ -62,7 +66,7 @@ func SupportedALPNs() []string {
 // field in SETUP there is no in-band way to discover what the peer meant, so
 // the session cannot continue.
 func VersionFromALPN(alpn string) (Version, bool) {
-	for _, v := range supportedVersions {
+	for _, v := range knownVersions {
 		if v.ALPN() == alpn {
 			return v, true
 		}
