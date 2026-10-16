@@ -56,6 +56,7 @@ type options struct {
 	webtransport bool
 	namespace    string
 	trackname    string
+	draft        uint
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -73,11 +74,12 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.publish, "publish", false, "publish the date track")
 	fs.BoolVar(&opts.subscribe, "subscribe", false, "subscribe to the date track")
 	fs.UintVar(&opts.fetch, "fetch", 0, "standalone FETCH: this many seconds of history, before subscribing")
-	fs.UintVar(&opts.join, "join", 0, "joining FETCH: this many seconds behind the subscription, after subscribing")
+	fs.UintVar(&opts.join, "join", 0, "join this many seconds behind the live edge: a joining FETCH in draft-18, a fill in draft-22")
 	fs.DurationVar(&opts.pause, "pause", 0, "after this long, pause delivery for the same again (subscriber only)")
 	fs.BoolVar(&opts.webtransport, "webtransport", false, "use WebTransport instead of native QUIC (client only)")
 	fs.StringVar(&opts.namespace, "namespace", "clock", "namespace to publish or subscribe to")
 	fs.StringVar(&opts.trackname, "trackname", "second", "track to publish or subscribe to")
+	fs.UintVar(&opts.draft, "draft", 0, "offer only this MOQT draft, e.g. 18 (client only; default offers every draft this build speaks)")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -126,6 +128,9 @@ func run(args []string) error {
 		fetch:     uint64(opts.fetch),
 		join:      uint64(opts.join),
 		pause:     opts.pause,
+	}
+	if opts.draft > 0 {
+		h.alpns = []string{fmt.Sprintf("moqt-%d", opts.draft)}
 	}
 	if opts.server {
 		tlsConfig, err := serverTLSConfig(opts.certFile, opts.keyFile)
@@ -192,10 +197,14 @@ func selfSignedCert() (tls.Certificate, error) {
 }
 
 // dialQUIC connects over native QUIC, where the MOQT version is the TLS ALPN.
-func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
+// alpns are the drafts to offer, every one this build speaks when empty.
+func dialQUIC(ctx context.Context, addr string, alpns []string) (moqtransport.Connection, error) {
+	if len(alpns) == 0 {
+		alpns = moqtransport.SupportedALPNs()
+	}
 	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
 		InsecureSkipVerify: true,
-		NextProtos:         moqtransport.SupportedALPNs(),
+		NextProtos:         alpns,
 	}, &quic.Config{
 		EnableDatagrams: true,
 	})
@@ -209,10 +218,13 @@ func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error)
 // negotiated subprotocol rather than the TLS ALPN. Offering it is not
 // optional: from draft-17 there is no version field in SETUP to fall back on,
 // so a session whose subprotocol is not a MOQT version cannot start.
-func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection, error) {
+func dialWebTransport(ctx context.Context, addr string, alpns []string) (moqtransport.Connection, error) {
+	if len(alpns) == 0 {
+		alpns = moqtransport.SupportedALPNs()
+	}
 	dialer := webtransport.Transport{
 		TLSClientConfig:      &tls.Config{InsecureSkipVerify: true},
-		ApplicationProtocols: moqtransport.SupportedALPNs(),
+		ApplicationProtocols: alpns,
 	}
 	_, session, err := dialer.Dial(ctx, addr, nil)
 	if err != nil {

@@ -16,7 +16,7 @@ func TestVersionALPN(t *testing.T) {
 
 func TestSupportedALPNs(t *testing.T) {
 	// Order is the offer order, most preferred first.
-	assert.Equal(t, []string{"moqt-18"}, SupportedALPNs())
+	assert.Equal(t, []string{"moqt-22", "moqt-18"}, SupportedALPNs())
 }
 
 func TestVersionAtLeast(t *testing.T) {

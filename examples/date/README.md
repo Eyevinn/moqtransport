@@ -42,12 +42,13 @@ localhost, and clients skip verification.
 
 | Flag | What it shows |
 |---|---|
-| `-join 10` | A **joining** FETCH: ten seconds behind the subscription, with the range worked out by the publisher so the two meet exactly |
+| `-join 10` | Joining ten seconds behind the live edge, with the range worked out by the publisher so the join and the subscription meet exactly: a **fill** in draft-22, a **joining** FETCH in draft-18 |
 | `-fetch 10` | A **standalone** FETCH: ten seconds named explicitly by the client, before subscribing |
 | `-pause 5s` | A REQUEST_UPDATE turning delivery off and on again, the way a paused player would. The publisher stops sending and says so |
-| Ctrl-C on the subscriber | The publisher noticing. draft-18 has no UNSUBSCRIBE: the subscriber resets its request stream, and the publisher's only sign is its subscription's context ending |
+| Ctrl-C on the subscriber | The publisher noticing. There has been no UNSUBSCRIBE since draft-17: the subscriber resets its request stream, and the publisher's only sign is its subscription's context ending |
 | `-trackname minute` | A rejection: the publisher answers DOES_NOT_EXIST rather than dropping the request |
 | `-subscribe` on both ends | A nil handler answering NOT_SUPPORTED, which is a real answer rather than silence |
+| `-draft 18` | Offering only one draft. By default a client offers `moqt-22` and `moqt-18`, and the server picks draft-22 |
 
 ```shell
 # Subscribe, then fill four seconds behind the live edge.
@@ -60,10 +61,10 @@ go run . -subscribe -fetch 4
 go run . -subscribe -pause 3s
 ```
 
-### The two kinds of FETCH
+### Fetching versus joining
 
 Both retrieve Objects that already exist. The difference is who decides the
-range, and it is the whole reason the joining form exists.
+range, and it is the whole reason the joining forms exist.
 
 `-fetch N` is a **standalone** FETCH: the client picks a range and asks for it.
 It runs before the SUBSCRIBE, so where the range should stop is a guess — the
@@ -85,29 +86,50 @@ even compute the right answer. Against a real track it cannot: only the
 publisher knows where the edge is, and it keeps moving while the two requests
 are in flight.
 
-`-join N` is a **joining** FETCH: the client names the subscription and how far
-back to go, and the publisher works out the rest from that subscription's
-Joining Location. The two are contiguous by construction — nothing missing at
-the join point, and nothing delivered twice.
+`-join N` asks the publisher for the range instead: how far back to go, with
+the publisher working out the rest from the live edge it reports. The join and
+the subscription are contiguous by construction — nothing missing at the join
+point, and nothing delivered twice.
+
+In draft-22 that is a **fill**, asked for in the SUBSCRIBE itself: the
+subscription starts at the Next Object, and FILL_PARAMETERS asks for the Groups
+from N back up to it, which arrive on a stream of their own.
 
 ```
-subscribed, live edge is group 1788080171
-joining fetch accepted, ends at group 1788080171
-joined  group 1788080167: 2026-08-30T08:56:07Z
-joined  group 1788080168: 2026-08-30T08:56:08Z
-joined  group 1788080169: 2026-08-30T08:56:09Z
-joined  group 1788080170: 2026-08-30T08:56:10Z
-joined  group 1788080171: 2026-08-30T08:56:11Z    <- the live edge itself
-received group 1788080172: 2026-08-30T08:56:12Z   <- and straight on from it
+session established, speaking moqt-22
+subscribed, live edge is group 1792154385
+filled  group 1792154381 object 0: 2026-10-16T12:39:41Z
+filled  group 1792154382 object 0: 2026-10-16T12:39:42Z
+filled  group 1792154383 object 0: 2026-10-16T12:39:43Z
+filled  group 1792154384 object 0: 2026-10-16T12:39:44Z
+filled  group 1792154385 object 0: 2026-10-16T12:39:45Z    <- the live edge itself
+filled complete
+received group 1792154386 object 0 (20 bytes): 2026-10-16T12:39:46Z   <- and straight on from it
 ```
 
-That property is what the test asserts: the Group IDs across the fetch and the
-subscription form one consecutive run.
+In draft-18 (`-draft 18`) it is a **joining** FETCH, sent after the SUBSCRIBE
+and naming it; the publisher resolves the range against that subscription's
+Joining Location.
 
-The publisher does not have to know which kind it answered. A joining FETCH
-reaches the handler with its Namespace, Track and range already resolved
-against the subscription it names, so `handleFetch` serves both the same way;
-`FetchRequest.Joining` is there only to say which it was.
+```
+session established, speaking moqt-18
+subscribed, live edge is group 1792154390
+joining fetch accepted, ends at group 1792154390
+joined  group 1792154386 object 0: 2026-10-16T12:39:46Z
+...
+joined  group 1792154390 object 0: 2026-10-16T12:39:50Z    <- the live edge itself
+joined complete
+received group 1792154391 object 0 (20 bytes): 2026-10-16T12:39:51Z   <- and straight on from it
+```
+
+That property is what the test asserts, on both drafts: the Group IDs across
+the join and the subscription form one consecutive run.
+
+The publisher serves all three the same way. A FETCH reaches `handleFetch` with
+a range it resolves against its Largest Object, a joining FETCH with that range
+already resolved against the subscription it names, and a fill reaches
+`handleFill` resolved against the Largest Object the subscription reported;
+both handlers hand the range to `writeSeconds`.
 
 ## How it talks
 
@@ -128,7 +150,12 @@ sequenceDiagram
     S->>P: SUBSCRIBE (clock/second)
     P->>S: SUBSCRIBE_OK (LARGEST_OBJECT = the live edge)
 
-    opt -join (joining)
+    opt -join, draft-22
+        Note over S,P: the SUBSCRIBE carried LOCATION_FILTER (Next Object) and FILL_PARAMETERS (N+1 groups back)
+        P-->>S: FETCH_HEADER stream (SUBSCRIBE's Request ID), N+1 objects, FIN
+    end
+
+    opt -join, draft-18
         S->>P: FETCH (subscription's Request ID, N groups back)
         Note over P: range resolved from the subscription's Joining Location
         P->>S: FETCH_OK (End Location = live edge + 1)
@@ -159,8 +186,8 @@ ID at the API level: the stream is the request.
 ## Tests
 
 `go test ./examples/date/` runs the example against itself over a real QUIC
-stack — both transports, both kinds of FETCH, the contiguity of a joining
-fetch with its subscription, and a rejection. It is the only place
+stack, once per draft — both transports, a FETCH, the contiguity of a join
+with its subscription, and a rejection. It is the only place
 the transport adapters, the TLS ALPN and the WebTransport subprotocol are
 exercised, so it takes a few seconds by construction: the track publishes once
 a second.

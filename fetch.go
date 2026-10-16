@@ -69,8 +69,24 @@ type fetchSession interface {
 	// what a Joining FETCH names.
 	subscriptionByRequestID(requestID uint64) (*Subscription, bool)
 
-	registerFetch(requestID uint64, f *FetchStream)
-	unregisterFetch(requestID uint64)
+	registerFetchReceiver(requestID uint64, r fetchReceiver)
+	unregisterFetchReceiver(requestID uint64)
+}
+
+// fetchReceiver is where the records of a stream opened with FETCH_HEADER go:
+// a FETCH this endpoint made, or a fill one of its subscriptions asked for.
+// The header carries only a Request ID, so both are indexed by it.
+type fetchReceiver interface {
+	// awaitOrder returns the Group Order the stream's Group ID deltas run in,
+	// waiting if it is not known yet.
+	awaitOrder(ctx context.Context) (GroupOrder, error)
+	// attach hands the receiver its stream, reporting false if it no longer
+	// wants one.
+	attach(stream ReceiveStream) bool
+	deliver(ctx context.Context, o *FetchObject) error
+	// responseComplete reports that the stream ended: with a FIN when
+	// complete, otherwise by a reset or an error.
+	responseComplete(complete bool)
 }
 
 // FetchRequest is an incoming FETCH.
@@ -285,6 +301,9 @@ type FetchResponse struct {
 	writer *wire2.FetchWriter
 	qlog   qlogger
 	done   bool
+
+	// onDone, when set, is called once the response has been closed or reset.
+	onDone func()
 }
 
 // StreamID returns the ID of the underlying stream.
@@ -345,23 +364,34 @@ func (f *FetchResponse) write(obj *wire2.FetchObject) error {
 // legitimate and meaningful answer.
 func (f *FetchResponse) Close() error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.done {
+		f.mu.Unlock()
 		return nil
 	}
 	f.done = true
-	return f.stream.Close()
+	err := f.stream.Close()
+	f.mu.Unlock()
+	f.finished()
+	return err
 }
 
 // Reset abandons the response, saying the range was not delivered in full.
 func (f *FetchResponse) Reset(code StreamErrorCode) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.done {
+		f.mu.Unlock()
 		return
 	}
 	f.done = true
 	f.stream.Reset(uint32(code))
+	f.mu.Unlock()
+	f.finished()
+}
+
+func (f *FetchResponse) finished() {
+	if f.onDone != nil {
+		f.onDone()
+	}
 }
 
 // FetchOkOption customises the FETCH_OK sent by Accept.
@@ -540,6 +570,14 @@ func (f *FetchStream) Close() error {
 	return nil
 }
 
+// awaitOrder implements fetchReceiver: a FETCH's order is fixed when it is
+// sent.
+func (f *FetchStream) awaitOrder(context.Context) (GroupOrder, error) { return f.order, nil }
+
+// attach implements fetchReceiver.
+func (f *FetchStream) attach(ReceiveStream) bool { return true }
+
+// deliver implements fetchReceiver.
 func (f *FetchStream) deliver(ctx context.Context, o *FetchObject) error {
 	select {
 	case f.objects <- o:
@@ -561,7 +599,7 @@ func (f *FetchStream) run() error {
 		f.mu.Unlock()
 		close(f.established)
 	})
-	f.session.unregisterFetch(f.requestID)
+	f.session.unregisterFetchReceiver(f.requestID)
 	// A request stream that ends without the data stream having finished means
 	// the response will never complete.
 	f.responseOnce.Do(func() { close(f.responseDone) })
@@ -726,7 +764,7 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 	// The response stream carries only a Request ID, and it may arrive before
 	// FETCH_OK does, so the fetch has to be findable before the request goes
 	// out at all.
-	s.registerFetch(msg.RequestID, fetch)
+	s.registerFetchReceiver(msg.RequestID, fetch)
 
 	go func() {
 		if err := fetch.run(); err != nil {
@@ -854,22 +892,30 @@ type fetchRangeError struct {
 
 func (e *fetchRangeError) Error() string { return fmt.Sprintf("%v: %v", e.code, e.reason) }
 
-// handleFetchStream reads a FETCH response stream and delivers its records to
-// the fetch that asked for them.
+// handleFetchStream reads a stream opened with FETCH_HEADER -- a FETCH
+// response, or in draft-22 a fill -- and delivers its records to the request
+// that asked for them.
 func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) {
 	requestID, err := wire2.ParseFetchHeader(reader)
 	if err != nil {
 		s.fail(err)
 		return
 	}
-	fetch, ok := s.fetchByRequestID(requestID)
-	if !ok {
-		// A response to a fetch we have already given up on.
+	fetch, ok := s.fetchReceiverByRequestID(requestID)
+	if !ok || !fetch.attach(stream) {
+		// A response to a fetch we have already given up on, or a fill we
+		// had concluded was not coming.
 		stream.Stop(uint32(StreamErrorCancelled))
 		return
 	}
+	order, err := fetch.awaitOrder(s.ctx)
+	if err != nil {
+		stream.Stop(uint32(StreamErrorCancelled))
+		fetch.responseComplete(false)
+		return
+	}
 
-	objects := wire2.NewFetchReader(reader, fetch.GroupOrder(), s.version)
+	objects := wire2.NewFetchReader(reader, order, s.version)
 	for {
 		record, err := objects.Next()
 		if err != nil {

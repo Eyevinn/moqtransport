@@ -55,6 +55,9 @@ type publisherSession interface {
 	// priorityMapper is how this session reduces a MOQT priority to one the
 	// transport understands.
 	priorityMapper() PriorityMapper
+
+	// fillHandler serves draft-22 fills; nil refuses them.
+	fillHandler() FillHandler
 }
 
 // SubscribeRequest is an incoming SUBSCRIBE, and the bidirectional stream that
@@ -71,6 +74,17 @@ type SubscribeRequest struct {
 	params       wire2.Parameters
 	subscription *Subscription
 	answered     bool
+
+	// earlyFills are fills asked for by REQUEST_UPDATEs that arrived before
+	// the SUBSCRIBE was answered. FILL_PARAMETERS is not subscription state,
+	// so they cannot be folded into params; each is started, under its own
+	// Request ID, once there is a subscription to fill.
+	earlyFills []earlyFill
+}
+
+type earlyFill struct {
+	requestID uint64
+	params    wire2.Parameters
 }
 
 func newSubscribeRequest(rs *requestStream, session publisherSession, msg *wire2.Subscribe) *SubscribeRequest {
@@ -181,15 +195,9 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	if err != nil {
 		return nil, err
 	}
-	groupOrder, present, err := params.GroupOrder()
+	groupOrder, hasGroupOrder, err := params.GroupOrder()
 	if err != nil {
 		return nil, err
-	}
-	if !present {
-		// Section 10.2.8: omitted from a SUBSCRIBE, the publisher's own
-		// preference for the Track applies. Nothing here tracks one, so it is
-		// Ascending, which is also the DEFAULT_PUBLISHER_GROUP_ORDER default.
-		groupOrder = GroupOrderAscending
 	}
 	filter, hasFilter := activeFilter(params.LocationFilter())
 	includeProperties, err := params.IncludeProperties()
@@ -203,6 +211,16 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	}
 	for _, opt := range opts {
 		opt(ok)
+	}
+	if !hasGroupOrder {
+		// Section 10.2.8: omitted from a SUBSCRIBE, the publisher's own
+		// preference for the Track applies, which is the
+		// DEFAULT_PUBLISHER_GROUP_ORDER Track Property it answers with, or
+		// Ascending without one. A fill inherits it, and the subscriber reads
+		// the same property to decode the fill stream.
+		if groupOrder, err = ok.TrackProperties.DefaultPublisherGroupOrder(); err != nil {
+			return nil, err
+		}
 	}
 	if !includeProperties {
 		// The field stays; Section 9.20.21 asks only that it be empty.
@@ -237,6 +255,19 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	r.session.registerSubscription(r.requestID, sub)
 	if err := r.write(ok); err != nil {
 		return nil, err
+	}
+
+	// Fills come after SUBSCRIBE_OK, so their ranges are resolved against
+	// the Largest Object it reported.
+	if fill, ok := params.FillParameters(); ok {
+		sub.startFill(r.requestID, fill)
+	}
+	r.mu.Lock()
+	early := r.earlyFills
+	r.earlyFills = nil
+	r.mu.Unlock()
+	for _, f := range early {
+		sub.startFill(f.requestID, f.params)
 	}
 	return sub, nil
 }
@@ -307,7 +338,17 @@ func (r *SubscribeRequest) handleMessage(msg wire2.ControlMessage) error {
 	if sub == nil {
 		// The subscriber updated its request before we answered it. There is
 		// nothing to apply it to yet, so it folds into the parameters the
-		// handler will read.
+		// handler will read -- all but a fill, which waits for the answer.
+		if update.Parameters.HasRangeFilter() {
+			r.mu.Unlock()
+			return r.write(&wire2.RequestError{
+				ErrorCode:   uint64(RequestErrorInvalidFilter),
+				ErrorReason: "range filters are not supported",
+			})
+		}
+		if fill, ok := update.Parameters.FillParameters(); ok {
+			r.earlyFills = append(r.earlyFills, earlyFill{requestID: update.RequestID, params: fill})
+		}
 		r.params = mergeParameters(r.params, update.Parameters)
 		r.mu.Unlock()
 		return r.write(&wire2.RequestOk{Parameters: wire2.Parameters{}})
@@ -319,6 +360,8 @@ func (r *SubscribeRequest) handleMessage(msg wire2.ControlMessage) error {
 
 // mergeParameters overlays update onto base. Section 10.9: a parameter absent
 // from a REQUEST_UPDATE keeps its value, and there is no way to remove one.
+// FILL_PARAMETERS is the exception: it applies only to the message that
+// carries it (draft-22 Section 9.20.15), so it is not merged.
 func mergeParameters(base, update wire2.Parameters) wire2.Parameters {
 	merged := make(wire2.Parameters, 0, len(base)+len(update))
 	for _, p := range base {
@@ -326,7 +369,12 @@ func mergeParameters(base, update wire2.Parameters) wire2.Parameters {
 			merged = append(merged, p)
 		}
 	}
-	return append(merged, update...)
+	for _, p := range update {
+		if p.Type != wire2.ParamFillParameters {
+			merged = append(merged, p)
+		}
+	}
+	return merged
 }
 
 // A Subscription is an accepted SUBSCRIBE: the publishing side of a request
@@ -358,9 +406,14 @@ type Subscription struct {
 	// largest is the subscription's Largest Object as this publisher knows
 	// it: what Accept reported, raised by every Object written since and by
 	// UpdateLargestObject. Draft-22 sends it in REQUEST_UPDATE_OK and
-	// PUBLISH_STATE_NOTIFY, both of which the library writes itself.
+	// PUBLISH_STATE_NOTIFY, both of which the library writes itself, and
+	// resolves fill ranges against it.
 	largest    Location
 	hasLargest bool
+
+	// fills are the fill streams still open, which are reset if the
+	// subscription ends first.
+	fills map[*FetchResponse]struct{}
 
 	// updates is written and closed only by the request stream's reader
 	// goroutine, which is what makes closing it safe: there is never a send in
@@ -502,8 +555,10 @@ func (s *Subscription) Updates() <-chan SubscriptionUpdate {
 }
 
 // streamEnded closes the updates channel. It runs on the reader goroutine
-// after the read loop has finished, so no send can be in flight.
+// after the read loop has finished, so no send can be in flight. A cancelled
+// subscription takes its fill streams with it (draft-22 Section 3.4.1).
 func (s *Subscription) streamEnded() {
+	s.resetFills(StreamErrorCancelled)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ended = true
@@ -585,7 +640,11 @@ func (s *Subscription) SendDatagram(o Object) error {
 // It must not be called until every stream this subscription will open has
 // been closed and there are no datagrams left to send, because PUBLISH_DONE's
 // Stream Count is the subscriber's signal that it has seen everything.
+//
+// A fill stream still open is reset first: PUBLISH_DONE may only follow once
+// every stream of the subscription is closed, fill streams included.
 func (s *Subscription) Close(code PublishDoneCode, reason string) error {
+	s.resetFills(StreamErrorCancelled)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -649,6 +708,12 @@ func (s *Subscription) applyUpdate(update *wire2.RequestUpdate) error {
 	}
 	if err := s.write(ok); err != nil {
 		return err
+	}
+	if fill, ok := update.Parameters.FillParameters(); ok {
+		// After the answer, so the range is resolved against the Largest
+		// Object it reported, and after the update is applied, so a fill
+		// asked for together with a pause opens nothing.
+		s.startFill(update.RequestID, fill)
 	}
 	return s.notify(notification)
 }

@@ -30,6 +30,11 @@ type subscriberSession interface {
 	// peerMaxRequestUpdates is how many unanswered REQUEST_UPDATEs the peer
 	// accepts on one stream, 0 for no limit.
 	peerMaxRequestUpdates() uint64
+
+	// registerFetchReceiver and unregisterFetchReceiver route a fill stream,
+	// which names only the Request ID that asked for it, to its FillStream.
+	registerFetchReceiver(requestID uint64, r fetchReceiver)
+	unregisterFetchReceiver(requestID uint64)
 }
 
 // PublishDone is the publisher's report that a subscription has ended
@@ -90,17 +95,31 @@ type RemoteTrack struct {
 	publishDone  *PublishDone
 	endedStreams uint64
 
-	// largest and paused are the subscription's state as the publisher last
-	// reported it: SUBSCRIBE_OK, then REQUEST_UPDATE_OK and
-	// PUBLISH_STATE_NOTIFY (draft-22), with paused also following what we
-	// asked for ourselves.
+	// largest, paused and filter are the subscription's state as the
+	// publisher last reported it: SUBSCRIBE_OK, then REQUEST_UPDATE_OK and
+	// PUBLISH_STATE_NOTIFY (draft-22), with paused and filter also following
+	// what we asked for ourselves.
 	largest    Location
 	hasLargest bool
 	paused     bool
+	filter     LocationFilter
+	hasFilter  bool
 
-	// pendingUpdates counts REQUEST_UPDATEs not yet answered, which a
-	// draft-22 peer can limit with MAX_REQUEST_UPDATES.
-	pendingUpdates uint64
+	// groupOrder is what the SUBSCRIBE asked for, if anything. A fill that
+	// does not say inherits it.
+	groupOrder    GroupOrder
+	hasGroupOrder bool
+
+	// pendingUpdates holds a slot per REQUEST_UPDATE not yet answered, in the
+	// order they were sent, which is the order the answers come in. A slot
+	// holds the fill the update asked for, if it did. A draft-22 peer can
+	// limit how many there are with MAX_REQUEST_UPDATES.
+	pendingUpdates []*FillStream
+
+	// fill is the fill the SUBSCRIBE asked for; fills holds every fill,
+	// Refills included, so that ending the subscription can end them too.
+	fill  *FillStream
+	fills []*FillStream
 
 	// states carries PUBLISH_STATE_NOTIFYs to the application. Like
 	// Subscription.Updates it is created on first ask, written only by the
@@ -299,13 +318,7 @@ func (t *RemoteTrack) subgroupStreamEnded(ctx context.Context, header *wire2.Sub
 		}
 		_ = t.deliver(ctx, marker)
 	}
-	t.mu.Lock()
-	t.endedStreams++
-	t.mu.Unlock()
-	select {
-	case t.streamEnded <- struct{}{}:
-	default:
-	}
+	t.dataStreamEnded()
 }
 
 // Update sends a REQUEST_UPDATE on this subscription's own stream. The
@@ -326,26 +339,42 @@ func (t *RemoteTrack) Update(opts ...SubscribeUpdateOption) error {
 			return err
 		}
 	}
+	return t.update(update.Parameters, nil)
+}
 
+// update sends a REQUEST_UPDATE carrying params. newFill, when set, makes the
+// fill the update asks for once its Request ID is known.
+func (t *RemoteTrack) update(params wire2.Parameters, newFill func(requestID uint64) *FillStream) error {
 	t.mu.Lock()
-	if limit := t.session.peerMaxRequestUpdates(); limit > 0 && t.pendingUpdates >= limit {
-		t.mu.Unlock()
+	defer t.mu.Unlock()
+	if limit := t.session.peerMaxRequestUpdates(); limit > 0 && uint64(len(t.pendingUpdates)) >= limit {
 		return ErrTooManyRequestUpdates
 	}
-	t.pendingUpdates++
-	if forward, ok := update.Parameters.Get(wire2.ParamForward); ok {
+
+	// The Request ID is allocated only once the update is going out, so an
+	// update refused above leaves no hole in the sequence. Holding the lock
+	// across the write keeps the slots in the order the updates are sent.
+	update := &wire2.RequestUpdate{RequestID: t.session.nextRequestID(), Parameters: params}
+	var fill *FillStream
+	if newFill != nil {
+		fill = newFill(update.RequestID)
+		t.session.registerFetchReceiver(update.RequestID, fill)
+	}
+	if err := t.write(update); err != nil {
+		if fill != nil {
+			t.session.unregisterFetchReceiver(update.RequestID)
+		}
+		return err
+	}
+	t.pendingUpdates = append(t.pendingUpdates, fill)
+	if fill != nil {
+		t.fills = append(t.fills, fill)
+	}
+	if forward, ok := params.Get(wire2.ParamForward); ok {
 		t.paused = forward.Number == 0
 	}
-	t.mu.Unlock()
-
-	// The Request ID is allocated last, so an update refused above does not
-	// leave a hole in the sequence.
-	update.RequestID = t.session.nextRequestID()
-	if err := t.write(update); err != nil {
-		t.mu.Lock()
-		t.pendingUpdates--
-		t.mu.Unlock()
-		return err
+	if f, ok := params.LocationFilter(); ok {
+		t.filter, t.hasFilter = activeFilter(f, true)
 	}
 	return nil
 }
@@ -356,10 +385,17 @@ var ErrTooManyRequestUpdates = errors.New("too many unanswered REQUEST_UPDATEs")
 
 // Close ends the subscription by resetting its request stream, which is what
 // draft-18 uses in place of UNSUBSCRIBE. It also ends delivery at once: a
-// subscriber that closed is not waiting for straggling data streams.
+// subscriber that closed is not waiting for straggling data streams, nor for
+// the rest of a fill.
 func (t *RemoteTrack) Close() error {
 	t.cancel(StreamErrorCancelled, errSubscriptionClosedLocally)
-	t.cancelDelivery(errSubscriptionClosedLocally)
+	t.finishDelivery(errSubscriptionClosedLocally)
+	t.mu.Lock()
+	fills := append([]*FillStream(nil), t.fills...)
+	t.mu.Unlock()
+	for _, f := range fills {
+		_ = f.Close()
+	}
 	return nil
 }
 
@@ -451,16 +487,56 @@ func (t *RemoteTrack) awaitDataStreams(cause error, want uint64) {
 }
 
 // finishDelivery ends Object delivery and stops routing data streams here. It
-// is idempotent; the first cause wins.
+// is idempotent; the first cause wins. A fill whose stream never came is over
+// too: the subscription that would have carried it is.
 func (t *RemoteTrack) finishDelivery(cause error) {
 	t.cancelDelivery(cause)
 	t.mu.Lock()
 	alias := t.trackAlias
 	registered := t.params != nil
+	fills := append([]*FillStream(nil), t.fills...)
 	t.mu.Unlock()
 	if registered {
 		t.session.unregisterTrackAlias(alias, t)
 	}
+	for _, f := range fills {
+		f.mu.Lock()
+		attached := f.stream != nil
+		f.mu.Unlock()
+		if !attached {
+			f.finish(false, context.Cause(t.deliveryCtx))
+		}
+		t.session.unregisterFetchReceiver(f.requestID)
+	}
+}
+
+// dataStreamEnded counts a data stream of this subscription toward the
+// PUBLISH_DONE Stream Count; in draft-22 fill streams count too.
+func (t *RemoteTrack) dataStreamEnded() {
+	t.mu.Lock()
+	t.endedStreams++
+	t.mu.Unlock()
+	select {
+	case t.streamEnded <- struct{}{}:
+	default:
+	}
+}
+
+// awaitGroupOrder returns the Group Order a fill inherits from the
+// subscription: what the SUBSCRIBE asked for, or else the publisher's
+// preference for the Track from SUBSCRIBE_OK. It waits for SUBSCRIBE_OK when
+// it has to.
+func (t *RemoteTrack) awaitGroupOrder(ctx context.Context) (GroupOrder, error) {
+	t.mu.Lock()
+	order, ok := t.groupOrder, t.hasGroupOrder
+	t.mu.Unlock()
+	if ok {
+		return order, nil
+	}
+	if err := t.awaitEstablished(ctx); err != nil {
+		return 0, err
+	}
+	return t.TrackProperties().DefaultPublisherGroupOrder()
 }
 
 func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
@@ -473,8 +549,11 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 		if t.params != nil {
 			// Established, so this answers a REQUEST_UPDATE. The publisher
 			// ends the subscription with PUBLISH_DONE(UPDATE_FAILED) next.
-			t.answeredUpdateLocked()
+			fill := t.answeredUpdateLocked()
 			t.mu.Unlock()
+			if fill != nil {
+				fill.finish(false, &RequestError{Code: RequestErrorCode(m.ErrorCode), Reason: m.ErrorReason})
+			}
 			return nil
 		}
 		t.answerErr = &RequestError{
@@ -506,11 +585,18 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 			return errUnexpectedTrackProperties
 		}
 		t.mu.Lock()
-		t.answeredUpdateLocked()
+		fill := t.answeredUpdateLocked()
 		if largest, ok := m.Parameters.LargestObject(); ok {
 			t.noteLargestLocked(largest)
 		}
+		filter, largest, hasLargest, paused := t.filter, t.largest, t.hasLargest, t.paused
+		if !t.hasFilter {
+			filter = LocationFilter{}
+		}
 		t.mu.Unlock()
+		if fill != nil {
+			fill.expect(filter, largest, hasLargest, paused)
+		}
 		return nil
 
 	case *wire2.PublishStateNotify:
@@ -519,10 +605,15 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 	return errUnexpectedMessageOnRequestStream
 }
 
-func (t *RemoteTrack) answeredUpdateLocked() {
-	if t.pendingUpdates > 0 {
-		t.pendingUpdates--
+// answeredUpdateLocked frees the oldest update's slot, returning the fill it
+// asked for, if any.
+func (t *RemoteTrack) answeredUpdateLocked() *FillStream {
+	if len(t.pendingUpdates) == 0 {
+		return nil
 	}
+	fill := t.pendingUpdates[0]
+	t.pendingUpdates = t.pendingUpdates[1:]
+	return fill
 }
 
 func (t *RemoteTrack) noteLargestLocked(l Location) {
@@ -550,6 +641,9 @@ func (t *RemoteTrack) stateNotified(m *wire2.PublishStateNotify) error {
 	}
 	if state.HasPaused {
 		t.paused = state.Paused
+	}
+	if state.HasFilter {
+		t.filter, t.hasFilter = activeFilter(state.Filter, true)
 	}
 	states := t.states
 	closed := t.statesClosed
@@ -593,7 +687,15 @@ func (t *RemoteTrack) accepted(ok *wire2.SubscribeOk) error {
 	t.params = ok.Parameters
 	t.properties = ok.TrackProperties
 	t.largest, t.hasLargest = ok.Parameters.LargestObject()
+	fill, filter, paused := t.fill, t.filter, t.paused
+	largest, hasLargest := t.largest, t.hasLargest
+	if !t.hasFilter {
+		filter = LocationFilter{}
+	}
 	t.mu.Unlock()
+	if fill != nil {
+		fill.expect(filter, largest, hasLargest, paused)
+	}
 
 	// Registering can fail with DUPLICATE_TRACK_ALIAS, which closes the
 	// session rather than just this request.

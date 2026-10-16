@@ -90,6 +90,8 @@ func (s *fakePublisherSession) priorityMapper() PriorityMapper {
 	return DefaultPriorityMapper
 }
 
+func (s *fakePublisherSession) fillHandler() FillHandler { return nil }
+
 // newIncomingSubscribe builds an incoming SUBSCRIBE as if the session's accept
 // loop had just read it, and returns the peer's end of the wire.
 func newIncomingSubscribe(t *testing.T, params wire2.Parameters) (*SubscribeRequest, *requestStreamPeer, *fakePublisherSession) {

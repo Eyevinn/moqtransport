@@ -105,6 +105,22 @@ func (c *collector) wait(t *testing.T, ctx context.Context) {
 	}
 }
 
+// drafts are the ALPN offers the end-to-end tests run with: each draft on
+// its own, so both are exercised against a server that speaks both.
+var drafts = [][]string{{"moqt-18"}, {"moqt-22"}}
+
+// forEachDraft runs test once per draft, in parallel: each run has a server
+// and a port of its own.
+func forEachDraft(t *testing.T, test func(t *testing.T, alpns []string)) {
+	t.Helper()
+	for _, alpns := range drafts {
+		t.Run(alpns[0], func(t *testing.T) {
+			t.Parallel()
+			test(t, alpns)
+		})
+	}
+}
+
 // runSubscriber runs a subscribing client until ctx ends.
 func runSubscriber(t *testing.T, ctx context.Context, addr string, h *moqHandler, useWebTransport bool) {
 	t.Helper()
@@ -137,97 +153,107 @@ func checkTimestamps(t *testing.T, objects []*moqtransport.Object) {
 }
 
 func TestSubscribeOverQUIC(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	forEachDraft(t, func(t *testing.T, alpns []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	addr := startServer(t, ctx)
-	got := newCollector(3)
-	runSubscriber(t, ctx, addr, &moqHandler{onObject: got.add}, false)
+		addr := startServer(t, ctx)
+		got := newCollector(3)
+		runSubscriber(t, ctx, addr, &moqHandler{onObject: got.add, alpns: alpns}, false)
 
-	got.wait(t, ctx)
-	objects := got.collected()
-	checkTimestamps(t, objects)
+		got.wait(t, ctx)
+		objects := got.collected()
+		checkTimestamps(t, objects)
 
-	// One Object per second, in order.
-	for i := 1; i < len(objects); i++ {
-		if objects[i].GroupID != objects[i-1].GroupID+1 {
-			t.Errorf("groups %d and %d are not consecutive", objects[i-1].GroupID, objects[i].GroupID)
+		// One Object per second, in order.
+		for i := 1; i < len(objects); i++ {
+			if objects[i].GroupID != objects[i-1].GroupID+1 {
+				t.Errorf("groups %d and %d are not consecutive", objects[i-1].GroupID, objects[i].GroupID)
+			}
 		}
-	}
+	})
 }
 
 func TestSubscribeOverWebTransport(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	forEachDraft(t, func(t *testing.T, alpns []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	addr := startServer(t, ctx)
-	got := newCollector(2)
-	runSubscriber(t, ctx, "https://"+addr+"/moq", &moqHandler{onObject: got.add}, true)
+		addr := startServer(t, ctx)
+		got := newCollector(2)
+		runSubscriber(t, ctx, "https://"+addr+"/moq", &moqHandler{onObject: got.add, alpns: alpns}, true)
 
-	got.wait(t, ctx)
-	checkTimestamps(t, got.collected())
+		got.wait(t, ctx)
+		checkTimestamps(t, got.collected())
+	})
 }
 
 // A FETCH returns seconds that have already passed, which the publisher
 // reconstructs from the Group IDs rather than remembering.
 func TestFetchHistory(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
+	forEachDraft(t, func(t *testing.T, alpns []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
 
-	addr := startServer(t, ctx)
-	const history = 4
-	got := newCollector(history)
-	runSubscriber(t, ctx, addr, &moqHandler{fetch: history, onObject: got.add}, false)
+		addr := startServer(t, ctx)
+		const history = 4
+		got := newCollector(history)
+		runSubscriber(t, ctx, addr, &moqHandler{fetch: history, onObject: got.add, alpns: alpns}, false)
 
-	got.wait(t, ctx)
-	objects := got.collected()
-	checkTimestamps(t, objects)
+		got.wait(t, ctx)
+		objects := got.collected()
+		checkTimestamps(t, objects)
 
-	// The fetch resolves before the subscription starts, so the first objects
-	// are all in the past.
-	now := uint64(time.Now().Unix())
-	for _, o := range objects {
-		if o.GroupID >= now {
-			t.Errorf("fetched group %d is not in the past (now %d)", o.GroupID, now)
+		// The fetch resolves before the subscription starts, so the first
+		// objects are all in the past.
+		now := uint64(time.Now().Unix())
+		for _, o := range objects {
+			if o.GroupID >= now {
+				t.Errorf("fetched group %d is not in the past (now %d)", o.GroupID, now)
+			}
 		}
-	}
+	})
 }
 
-// A joining FETCH names the subscription it joins instead of a range, and the
-// publisher works the range out from it. The point of that is this: what the
-// fetch returns and what the subscription delivers meet exactly, with no gap
-// at the join point and no Object delivered twice.
+// Joining behind the live edge: a draft-18 Joining FETCH names the
+// subscription it joins instead of a range, and a draft-22 fill comes with the
+// subscription itself; either way the publisher works the range out. The
+// point of that is this: what the join returns and what the subscription
+// delivers meet exactly, with no gap at the join point and no Object
+// delivered twice.
 //
 // A standalone FETCH cannot promise it. Issued before the SUBSCRIBE, its range
 // is a guess, and whatever is published between the two falls in between them.
-func TestJoiningFetchIsContiguousWithTheSubscription(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+func TestJoinIsContiguousWithTheSubscription(t *testing.T) {
+	forEachDraft(t, func(t *testing.T, alpns []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	addr := startServer(t, ctx)
-	const behind = 4
-	// Everything the fetch returns, and then two Objects from the live edge.
-	got := newCollector(behind + 3)
-	runSubscriber(t, ctx, addr, &moqHandler{join: behind, onObject: got.add}, false)
+		addr := startServer(t, ctx)
+		const behind = 4
+		// Everything the join returns, and then two Objects from the live edge.
+		got := newCollector(behind + 3)
+		runSubscriber(t, ctx, addr, &moqHandler{join: behind, onObject: got.add, alpns: alpns}, false)
 
-	got.wait(t, ctx)
-	objects := got.collected()
-	checkTimestamps(t, objects)
+		got.wait(t, ctx)
+		objects := got.collected()
+		checkTimestamps(t, objects)
 
-	for i := 1; i < len(objects); i++ {
-		previous, current := objects[i-1].GroupID, objects[i].GroupID
-		if current != previous+1 {
-			t.Fatalf("groups %d and %d are not consecutive: the fetch and the subscription %s",
-				previous, current,
-				map[bool]string{true: "overlap", false: "leave a gap"}[current <= previous])
+		for i := 1; i < len(objects); i++ {
+			previous, current := objects[i-1].GroupID, objects[i].GroupID
+			if current != previous+1 {
+				t.Fatalf("groups %d and %d are not consecutive: the join and the subscription %s",
+					previous, current,
+					map[bool]string{true: "overlap", false: "leave a gap"}[current <= previous])
+			}
 		}
-	}
 
-	// The fetch really did reach back: the run starts behind where the
-	// subscription alone would have.
-	if len(objects) < behind+1 {
-		t.Fatalf("got %d objects, want at least %d", len(objects), behind+1)
-	}
+		// The join really did reach back: the run starts behind where the
+		// subscription alone would have.
+		if len(objects) < behind+1 {
+			t.Fatalf("got %d objects, want at least %d", len(objects), behind+1)
+		}
+	})
 }
 
 // A subscribe for a track the publisher does not have is refused, and the
@@ -237,7 +263,7 @@ func TestSubscribeUnknownTrack(t *testing.T) {
 	defer cancel()
 
 	addr := startServer(t, ctx)
-	conn, err := dialQUIC(ctx, addr)
+	conn, err := dialQUIC(ctx, addr, nil)
 	if err != nil {
 		t.Fatalf("dialling: %v", err)
 	}
@@ -246,6 +272,10 @@ func TestSubscribeUnknownTrack(t *testing.T) {
 		t.Fatalf("running the session: %v", err)
 	}
 	defer func() { _ = session.Close(moqtransport.SessionErrorNoError, "test over") }()
+	// Both ends offer every draft this build speaks, and the newest wins.
+	if session.Version() != moqtransport.Version22 {
+		t.Errorf("negotiated %v, want %v", session.Version(), moqtransport.Version22)
+	}
 
 	_, err = session.Subscribe(ctx, []string{"clock"}, "minute")
 	if err == nil {
