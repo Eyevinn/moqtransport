@@ -6,9 +6,11 @@
 
 ## Protocol version
 
-The target is [draft-ietf-moq-transport-18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt). A second declaration set for draft-20 is planned alongside it, sharing one architecture.
+Two drafts are spoken, the two the working group named as interop targets in October 2026: [draft-ietf-moq-transport-22](https://www.ietf.org/archive/id/draft-ietf-moq-transport-22.txt) and [draft-ietf-moq-transport-18](https://www.ietf.org/archive/id/draft-ietf-moq-transport-18.txt). They share one architecture: one set of message declarations with per-draft codecs generated from it, a per-draft parameter registry, and a session whose behavior follows the draft it negotiated.
 
-There is no version field on the wire from draft-17 onwards: SETUP does not carry one, and the version is settled out of band before a byte of MOQT is written. The ALPN string is therefore the whole interop contract — `moqt-18` for native QUIC, and the same identifier as the WebTransport subprotocol.
+There is no version field on the wire from draft-17 onwards: SETUP does not carry one, and the version is settled out of band before a byte of MOQT is written. The ALPN string is therefore the whole interop contract — `moqt-22` or `moqt-18` for native QUIC, and the same identifiers as the WebTransport subprotocol. `SupportedALPNs()` offers both, draft-22 first, and `Session.Version()` says which one a session got.
+
+Where the drafts differ, the API is the same and the library translates: a `LocationFilter` is draft-22's LOCATION_FILTER and draft-18's SUBSCRIPTION_FILTER, and a FETCH range is a `LocationFilter` in both, though draft-18 sends it as explicit Start and End Locations. What exists in only one draft fails with `ErrNotInThisDraft` in the other: draft-18's Joining FETCH, and draft-22's fill fetch streams and PUBLISH_STATE_NOTIFY.
 
 Drafts 14 and 16 are **not** supported. draft-17 changed the varint encoding, moved SETUP onto a pair of unidirectional streams, gave every request its own bidirectional stream, and reused codepoints across the break, so nothing of the older wire format survives. Use the `v0.10.x` line for draft-14 and draft-16.
 
@@ -22,8 +24,12 @@ an in-process transport:
   filters
 - the SETUP control stream pair, per-request bidirectional streams, and the
   subgroup, datagram and FETCH data planes
-- SUBSCRIBE, FETCH (including joining fetches), TRACK_STATUS,
-  PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE, in both directions
+- SUBSCRIBE, FETCH, TRACK_STATUS, PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE,
+  in both directions, on both drafts
+- draft-18's joining FETCH; draft-22's fill fetch streams (`WithFill`,
+  `RemoteTrack.Refill`, `Session.FillHandler`), PUBLISH_STATE_NOTIFY
+  (`Subscription.NotifyState`, `RemoteTrack.StateUpdates`) and
+  MAX_REQUEST_UPDATES
 
 Every request type is logged to qlog when a `Session.Qlogger` is set: control
 messages both ways, data stream types, Objects on subgroup and fetch streams,
@@ -36,8 +42,9 @@ WebTransport sessions are not scheduled, as webtransport-go exposes no stream
 priority.
 
 Not yet done: incoming PUBLISH and SUBSCRIBE_TRACKS, which are answered with
-`NOT_SUPPORTED`, and GOAWAY-driven session migration, which is read and
-ignored.
+`NOT_SUPPORTED`; GOAWAY-driven session migration, which is read and ignored;
+and draft-22's Range Filters, which are refused with `INVALID_FILTER` since no
+MAX_FILTER_RANGES is advertised.
 
 ## Design
 
@@ -97,18 +104,20 @@ go run . -server -publish    # in one shell
 go run . -subscribe -join 4  # in another
 ```
 
-`-join 4` is a joining FETCH: it fills the four seconds behind the live edge
-before playing from it, with the publisher resolving the range so that what the
-fetch returns and what the subscription delivers meet exactly. That is the
-pattern a player uses to fill a buffer, and the example's README shows the
-group numbers proving there is no gap and no duplicate at the join point.
+`-join 4` fills the four seconds behind the live edge before playing from it,
+with the publisher resolving the range so that what the join returns and what
+the subscription delivers meet exactly. On draft-22 that is a fill fetch stream
+asked for in the SUBSCRIBE itself; on draft-18 (`-draft 18`) it is a joining
+FETCH sent after it. That is the pattern a player uses to fill a buffer, and
+the example's README shows the group numbers proving there is no gap and no
+duplicate at the join point.
 
 ## Project structure
 
 - `examples/date/`: a publisher and subscriber for a clock track
 - `quicmoq/`: adapter for native QUIC connections
 - `webtransportmoq/`: adapter for WebTransport sessions
-- `internal/wire2/`: the draft-18 wire format — message codecs, the three Key-Value-Pair registries, and the hand-written data-plane bitfields
+- `internal/wire2/`: the draft-18 and draft-22 wire formats — message codecs, the three Key-Value-Pair registries, and the hand-written data-plane bitfields
 - `wiregen/`: the code generator that writes the message codecs from a declaration file
 
 ## Requirements

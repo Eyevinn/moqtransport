@@ -33,6 +33,9 @@ type moqHandler struct {
 	join      uint64
 	pause     time.Duration
 
+	// alpns, when set, are the only drafts a client offers.
+	alpns []string
+
 	// onObject, when set, is called for every Object received. Nothing in the
 	// command sets it; it is the seam the tests watch delivery through.
 	onObject func(*moqtransport.Object)
@@ -99,9 +102,9 @@ func (h *moqHandler) runClient(ctx context.Context, addr string, useWebTransport
 	var conn moqtransport.Connection
 	var err error
 	if useWebTransport {
-		conn, err = dialWebTransport(ctx, addr)
+		conn, err = dialWebTransport(ctx, addr, h.alpns)
 	} else {
-		conn, err = dialQUIC(ctx, addr)
+		conn, err = dialQUIC(ctx, addr, h.alpns)
 	}
 	if err != nil {
 		return err
@@ -121,6 +124,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	if h.publish {
 		session.SubscribeHandler = moqtransport.SubscribeHandlerFunc(h.handleSubscribe)
 		session.FetchHandler = moqtransport.FetchHandlerFunc(h.handleFetch)
+		session.FillHandler = moqtransport.FillHandlerFunc(h.handleFill)
 	}
 	if h.subscribe {
 		session.PublishNamespaceHandler = moqtransport.PublishNamespaceHandlerFunc(h.handlePublishNamespace)
@@ -278,7 +282,31 @@ func (h *moqHandler) handleFetch(r *moqtransport.FetchRequest) {
 	} else {
 		log.Printf("serving fetch for groups %d..%d", rng.Start.Group, rng.End.Group)
 	}
+	writeSeconds(response, rng)
+}
 
+// handleFill serves the fill a draft-22 subscriber asked for along with its
+// subscription. The library has already resolved the range against the
+// Largest Object the subscription reported, and decided there is something to
+// send; serving it is the same as serving a FETCH.
+func (h *moqHandler) handleFill(r *moqtransport.FillRequest) {
+	rng := r.Range()
+	if rng.End.Group-rng.Start.Group > maxFetchGroups {
+		_ = r.Reject(moqtransport.StreamErrorExcessiveLoad)
+		return
+	}
+	response, err := r.Accept()
+	if err != nil {
+		log.Printf("accepting fill failed: %v", err)
+		return
+	}
+	log.Printf("serving fill %d for groups %d..%d", r.RequestID(), rng.Start.Group, rng.End.Group)
+	writeSeconds(response, rng)
+}
+
+// writeSeconds writes the one Object of every second in rng and finishes the
+// response.
+func writeSeconds(response *moqtransport.FetchResponse, rng moqtransport.LocationRange) {
 	for group := rng.Start.Group; group <= rng.End.Group; group++ {
 		// A Start Location past the only Object in its Group excludes it.
 		if !rng.Contains(moqtransport.Location{Group: group}) {
@@ -338,14 +366,16 @@ func (h *moqHandler) fetchHistory(ctx context.Context, session *moqtransport.Ses
 	h.drainFetch(ctx, fetch, "fetched")
 }
 
-// joiningFetch retrieves the seconds behind an established subscription, the
-// way a player fills a buffer before playing from the live edge.
+// joiningFetch retrieves the seconds behind an established draft-18
+// subscription, the way a player fills a buffer before playing from the live
+// edge.
 //
 // The range is not this endpoint's to compute. It names the subscription and
 // how far back to go, and the publisher works out the rest from that
 // subscription's Joining Location, so what the fetch returns and what the
 // subscription delivers are contiguous and do not overlap -- no gap at the
-// join point, and no Object delivered twice.
+// join point, and no Object delivered twice. Draft-22 does the same with a
+// fill; see subscribeAndRead.
 func (h *moqHandler) joiningFetch(ctx context.Context, session *moqtransport.Session, track *moqtransport.RemoteTrack) {
 	fetch, err := session.FetchRelative(ctx, track, h.join)
 	if err != nil {
@@ -356,9 +386,15 @@ func (h *moqHandler) joiningFetch(ctx context.Context, session *moqtransport.Ses
 	h.drainFetch(ctx, fetch, "joined ")
 }
 
-// drainFetch reads a whole FETCH response. Reaching the end of one is an
-// ending of its own: a FETCH is finite, unlike a subscription.
-func (h *moqHandler) drainFetch(ctx context.Context, fetch *moqtransport.FetchStream, label string) {
+// fetchReader is what a FETCH response and a fill have in common: a finite
+// run of records that ends with ErrFetchComplete.
+type fetchReader interface {
+	ReadObject(ctx context.Context) (*moqtransport.FetchObject, error)
+}
+
+// drainFetch reads a whole FETCH response or fill. Reaching the end of one is
+// an ending of its own: it is finite, unlike a subscription.
+func (h *moqHandler) drainFetch(ctx context.Context, fetch fetchReader, label string) {
 	for {
 		record, err := fetch.ReadObject(ctx)
 		if err != nil {
@@ -385,16 +421,31 @@ func (h *moqHandler) drainFetch(ctx context.Context, fetch *moqtransport.FetchSt
 
 // subscribeAndRead subscribes to the date track and logs what arrives.
 func (h *moqHandler) subscribeAndRead(ctx context.Context, session *moqtransport.Session) error {
-	track, err := session.Subscribe(ctx, h.namespace, h.trackname)
+	// Draft-22 joins in the SUBSCRIBE itself: the subscription starts at the
+	// Next Object and the fill delivers what came before it, back to h.join
+	// seconds behind the live edge. RelativeStart counts from the Next
+	// Group, so 1 is the current second and h.join+1 reaches h.join behind it.
+	fill := h.join > 0 && session.Version() != moqtransport.Version18
+	var opts []moqtransport.SubscribeOption
+	if fill {
+		opts = append(opts,
+			moqtransport.WithFilter(moqtransport.NextObject()),
+			moqtransport.WithFill(moqtransport.FillRange(moqtransport.RelativeStart(h.join+1))))
+	}
+	track, err := session.Subscribe(ctx, h.namespace, h.trackname, opts...)
 	if err != nil {
 		return err
 	}
 	if largest, ok := track.LargestObject(); ok {
 		log.Printf("subscribed, live edge is group %d", largest.Group)
 	}
-	// A joining fetch has to come after the SUBSCRIBE it joins: it names that
-	// subscription, and the publisher resolves the range against it.
-	if h.join > 0 {
+	switch {
+	case fill:
+		h.drainFetch(ctx, track.Fill(), "filled ")
+	case h.join > 0:
+		// A joining fetch has to come after the SUBSCRIBE it joins: it names
+		// that subscription, and the publisher resolves the range against
+		// it.
 		h.joiningFetch(ctx, session, track)
 	}
 	if h.pause > 0 {

@@ -307,6 +307,8 @@ type fakeSubscriberSession struct {
 func (s *fakeSubscriberSession) registerTrackAlias(uint64, *RemoteTrack) error { return nil }
 func (s *fakeSubscriberSession) unregisterTrackAlias(uint64, *RemoteTrack)     {}
 func (s *fakeSubscriberSession) peerMaxRequestUpdates() uint64                 { return s.maxUpdates }
+func (s *fakeSubscriberSession) registerFetchReceiver(uint64, fetchReceiver)   {}
+func (s *fakeSubscriberSession) unregisterFetchReceiver(uint64)                {}
 func (s *fakeSubscriberSession) nextRequestID() uint64 {
 	s.nextID += 2
 	return s.nextID

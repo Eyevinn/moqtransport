@@ -17,6 +17,13 @@ import (
 // Version identifies the MOQT draft a session speaks.
 type Version = wire2.Version
 
+// The drafts this build speaks. A session's Version says which one it
+// negotiated; behavior that differs between them is documented where it does.
+const (
+	Version18 = wire2.Version18
+	Version22 = wire2.Version22
+)
+
 // SupportedALPNs returns the protocol identifiers this build speaks, most
 // preferred first.
 //
@@ -54,6 +61,11 @@ type Session struct {
 	// FetchHandler answers incoming FETCH requests, by which a peer asks for a
 	// range of Objects that already exist.
 	FetchHandler FetchHandler
+
+	// FillHandler serves the fills a draft-22 subscriber asks for along with
+	// a subscription. A nil handler refuses them, which ends the fill and
+	// leaves the subscription alone.
+	FillHandler FillHandler
 
 	// Path is the PATH Setup Option, the path-abempty portion of a moqt:// URI.
 	// It is for native QUIC clients only: a server that sends one, or anyone
@@ -124,9 +136,10 @@ type Session struct {
 	// the Request ID the peer gave them. A Joining FETCH names one of these.
 	incomingSubs map[uint64]*Subscription
 
-	// outgoingFetches indexes the fetches this endpoint has made, by the
-	// Request ID it gave them. A FETCH response stream carries only that ID.
-	outgoingFetches map[uint64]*FetchStream
+	// fetchReceivers indexes the fetches and fills this endpoint has asked
+	// for, by the Request ID it gave them. A stream opened with FETCH_HEADER
+	// carries only that ID.
+	fetchReceivers map[uint64]fetchReceiver
 }
 
 // trackAliasWait is how long an incoming data stream waits for the control
@@ -167,7 +180,7 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.prefixes = newPrefixRegistry()
 	s.localAliases = map[string]uint64{}
 	s.incomingSubs = map[uint64]*Subscription{}
-	s.outgoingFetches = map[uint64]*FetchStream{}
+	s.fetchReceivers = map[uint64]fetchReceiver{}
 	s.pendingUni = newPendingStreams[pendingUniStream](s.MaxPendingStreams)
 	s.pendingBidi = newPendingStreams[Stream](s.MaxPendingStreams)
 	s.ctx, s.cancel = context.WithCancelCause(context.WithoutCancel(ctx))
@@ -315,6 +328,10 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	if err != nil {
 		return nil, err
 	}
+	fillParams, hasFill := msg.Parameters.FillParameters()
+	if hasFill && !s.version.AtLeast(wire2.Version22) {
+		return nil, fmt.Errorf("%w: fill", ErrNotInThisDraft)
+	}
 
 	stream, err := s.conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -323,6 +340,15 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	rt := newRemoteTrack(s.ctx, rs, s, msg.RequestID, namespace, track)
 	rt.paused = !forward
+	rt.filter, rt.hasFilter = activeFilter(msg.Parameters.LocationFilter())
+	rt.groupOrder, rt.hasGroupOrder, _ = msg.Parameters.GroupOrder()
+	if hasFill {
+		// Registered before the SUBSCRIBE goes out: the fill stream can
+		// overtake the SUBSCRIBE_OK, and it names only the Request ID.
+		rt.fill = newFillStream(rt, msg.RequestID, fillParams)
+		rt.fills = append(rt.fills, rt.fill)
+		s.registerFetchReceiver(msg.RequestID, rt.fill)
+	}
 
 	// The reader starts before the request goes out: the publisher may answer
 	// the moment it has the bytes, and a response that arrived while we were
@@ -408,26 +434,29 @@ func (s *Session) subscriptionByRequestID(requestID uint64) (*Subscription, bool
 	return sub, ok
 }
 
-// registerFetch implements fetchSession.
-func (s *Session) registerFetch(requestID uint64, f *FetchStream) {
+// registerFetchReceiver implements fetchSession and subscriberSession.
+func (s *Session) registerFetchReceiver(requestID uint64, r fetchReceiver) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.outgoingFetches[requestID] = f
+	s.fetchReceivers[requestID] = r
 }
 
-// unregisterFetch implements fetchSession.
-func (s *Session) unregisterFetch(requestID uint64) {
+// unregisterFetchReceiver implements fetchSession and subscriberSession.
+func (s *Session) unregisterFetchReceiver(requestID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.outgoingFetches, requestID)
+	delete(s.fetchReceivers, requestID)
 }
 
-func (s *Session) fetchByRequestID(requestID uint64) (*FetchStream, bool) {
+func (s *Session) fetchReceiverByRequestID(requestID uint64) (fetchReceiver, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, ok := s.outgoingFetches[requestID]
-	return f, ok
+	r, ok := s.fetchReceivers[requestID]
+	return r, ok
 }
+
+// fillHandler implements publisherSession.
+func (s *Session) fillHandler() FillHandler { return s.FillHandler }
 
 // priorityMapper implements publisherSession.
 func (s *Session) priorityMapper() PriorityMapper {

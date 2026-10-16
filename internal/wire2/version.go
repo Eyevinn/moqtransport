@@ -36,12 +36,10 @@ var knownVersions = []Version{Version22, Version18}
 
 // supportedVersions lists what this build offers, most preferred first. Order
 // matters: it is the offer order in NextProtos, and Go's TLS server picks the
-// first of its own protocols the client also offers. Adding a draft means
-// adding a declaration set, an entry in knownVersions, and one here.
-//
-// Version22 is known but not offered yet: fill fetch, which replaces the
-// joining FETCH applications use to join a track, is not in place.
-var supportedVersions = []Version{Version18}
+// first of its own protocols the client also offers, so a server offering
+// this list speaks the newest draft with any client that can. Adding a draft
+// means adding a declaration set, an entry in knownVersions, and one here.
+var supportedVersions = []Version{Version22, Version18}
 
 // AtLeast reports whether v is draft n or later. Behavior that changed between
 // drafts is gated on it rather than on equality, so a third declaration set
