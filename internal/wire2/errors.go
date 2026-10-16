@@ -39,6 +39,14 @@ var (
 	// draft-18 defines.
 	errInvalidFetchType = errors.New("invalid fetch type")
 
+	// errJoiningFetchNotInDraft means a joining FETCH was sent on a session
+	// whose draft has none. Draft-20 replaced it with fill fetch streams.
+	errJoiningFetchNotInDraft = errors.New("joining fetch does not exist after draft-18")
+
+	// errJoiningFetchWithoutSubscription means a joining FETCH was built
+	// without the subscription it joins.
+	errJoiningFetchWithoutSubscription = errors.New("joining fetch names no subscription")
+
 	// errControlMessageTooLong means a message body would not fit the 16-bit
 	// Message Length field, so it cannot be framed at all.
 	errControlMessageTooLong = errors.New("control message body exceeds 65535 bytes")
@@ -110,13 +118,23 @@ var (
 	// 2^64-1.
 	errSubgroupIDOverflow = errors.New("subgroup ID plus one overflows")
 
-	// errInvalidFilterType means a Subscription Filter named a Filter Type
-	// outside the four Section 5.1.2 defines.
-	errInvalidFilterType = errors.New("invalid subscription filter type")
+	// errInvalidFilterType means a location filter named a type its draft
+	// does not define: draft-18's Filter Type is 1-4, draft-22's Location
+	// Filter Type 0-5.
+	errInvalidFilterType = errors.New("invalid location filter type")
 
-	// errEndGroupOverflow means an AbsoluteRange filter's Start Group plus its
-	// End Group Delta would exceed 2^64-1.
-	errEndGroupOverflow = errors.New("subscription filter end group overflows")
+	// errEndGroupOverflow means a location filter's Start Group plus its End
+	// Group Delta would exceed 2^64-1.
+	errEndGroupOverflow = errors.New("location filter end group overflows")
+
+	// errFilterNotInDraft18 means a location filter has no draft-18 form: a
+	// relative start of more than zero Groups, or an end inside a Group. It is
+	// refused on send rather than widened into something not asked for.
+	errFilterNotInDraft18 = errors.New("location filter cannot be expressed in draft-18")
+
+	// errFetchEndBeforeStart means a draft-18 FETCH range ends before it
+	// starts.
+	errFetchEndBeforeStart = errors.New("fetch range ends before it starts")
 
 	// errInvalidGroupOrder means a GROUP_ORDER parameter was neither Ascending
 	// nor Descending.
@@ -200,4 +218,25 @@ type unknownStreamTypeError struct {
 
 func (e unknownStreamTypeError) Error() string {
 	return fmt.Sprintf("unknown stream type %#x", uint64(e.streamType))
+}
+
+// messageNotInDraftError means a message was sent on a session whose draft
+// does not define it.
+type messageNotInDraftError struct {
+	messageType ControlMessageType
+	version     Version
+}
+
+func (e messageNotInDraftError) Error() string {
+	return fmt.Sprintf("%v does not exist in %v", e.messageType, e.version)
+}
+
+// unsupportedVersionError means a codec was asked for a draft this build has
+// no declaration set for.
+type unsupportedVersionError struct {
+	version Version
+}
+
+func (e unsupportedVersionError) Error() string {
+	return fmt.Sprintf("no codecs for %v", e.version)
 }

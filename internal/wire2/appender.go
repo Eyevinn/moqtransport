@@ -18,15 +18,18 @@ const maxControlMessageBodyLen = math.MaxUint16
 //
 //	Message Type (vi64) | Message Length (16) | Message Body (..)
 //
+// with the body in version's encoding. The framing itself is the same in
+// every draft this package speaks.
+//
 // The length is written as a placeholder and back-patched once the body is
 // known, since the body length cannot be computed in advance: vi64 lengths
 // depend on the values and the trailing Track Properties block has no count.
-func AppendControlMessage(buf []byte, m MessageV18) ([]byte, error) {
+func AppendControlMessage(buf []byte, m ControlMessage, version Version) ([]byte, error) {
 	buf = vi64.Append(buf, uint64(m.Type()))
 	lengthOffset := len(buf)
 	buf = append(buf, 0, 0)
 
-	buf, err := m.appendV18(buf)
+	buf, err := appendBody(buf, m, version)
 	if err != nil {
 		return nil, err
 	}

@@ -28,7 +28,7 @@ func TestObjectDatagramRoundTrip(t *testing.T) {
 			buf, err := AppendObjectDatagram(nil, d)
 			require.NoError(t, err)
 
-			got, err := ParseObjectDatagram(buf)
+			got, err := ParseObjectDatagram(buf, Version18)
 			require.NoError(t, err)
 			assert.Equal(t, d.TrackAlias, got.TrackAlias)
 			assert.Equal(t, d.GroupID, got.GroupID)
@@ -75,7 +75,7 @@ func TestObjectDatagramStatusAndEndOfGroup(t *testing.T) {
 	for _, invalid := range []uint64{0x22, 0x23, 0x26, 0x27, 0x2A, 0x2B, 0x2E, 0x2F} {
 		buf := vi64.Append(nil, invalid)
 		buf = append(buf, 0x01, 0x02, 0x03, 0x04)
-		_, err := ParseObjectDatagram(buf)
+		_, err := ParseObjectDatagram(buf, Version18)
 		assert.ErrorIs(t, err, errDatagramStatusEndOfGroup, "type %#x", invalid)
 	}
 }
@@ -86,7 +86,7 @@ func TestObjectDatagramInvalidTypes(t *testing.T) {
 	for _, invalid := range []uint64{0x10, 0x1F, 0x30, 0x40, 0x50, 0x5F, 0x80, 0x100, 0x2F00} {
 		buf := vi64.Append(nil, invalid)
 		buf = append(buf, 0x01, 0x02, 0x03, 0x04)
-		_, err := ParseObjectDatagram(buf)
+		_, err := ParseObjectDatagram(buf, Version18)
 		assert.ErrorAs(t, err, &unknownDatagramTypeError{}, "type %#x", invalid)
 	}
 }
@@ -98,7 +98,7 @@ func TestObjectDatagramEmptyProperties(t *testing.T) {
 	buf = append(buf, 0x01, 0x02, 0x03) // alias, group, object
 	buf = append(buf, 0x80)             // priority
 	buf = append(buf, 0x00)             // properties length 0
-	_, err := ParseObjectDatagram(buf)
+	_, err := ParseObjectDatagram(buf, Version18)
 	assert.ErrorIs(t, err, errEmptyDatagramProperties)
 }
 
@@ -115,7 +115,7 @@ func TestObjectDatagramPropertiesOnStatus(t *testing.T) {
 	buf = append(buf, 0x80)             // priority
 	buf = append(buf, props.appendLength(nil)...)
 	buf = vi64.Append(buf, uint64(ObjectStatusEndOfGroup))
-	_, err = ParseObjectDatagram(buf)
+	_, err = ParseObjectDatagram(buf, Version18)
 	assert.ErrorIs(t, err, errPropertiesOnNonNormalObject)
 }
 
@@ -127,7 +127,7 @@ func TestObjectDatagramPayloadRunsToEnd(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := ParseObjectDatagram(append(buf, "def"...))
+	got, err := ParseObjectDatagram(append(buf, "def"...), Version18)
 	require.NoError(t, err)
 	assert.Equal(t, "abcdef", string(got.Payload))
 }
@@ -139,7 +139,7 @@ func TestObjectDatagramTruncated(t *testing.T) {
 	require.NoError(t, err)
 
 	for n := 1; n < len(full); n++ {
-		_, err := ParseObjectDatagram(full[:n])
+		_, err := ParseObjectDatagram(full[:n], Version18)
 		assert.Error(t, err, "truncated to %d bytes", n)
 	}
 }

@@ -2,7 +2,9 @@ package wire2
 
 import "fmt"
 
-// Setup Option types (draft-ietf-moq-transport-18, Section 15.4).
+// Setup Option types (draft-ietf-moq-transport-18 Section 15.4, draft-22
+// Section 16.4). Draft-22 adds MAX_FILTER_RANGES and MAX_REQUEST_UPDATES; a
+// draft-18 peer ignores both, as it must any option it does not know.
 //
 // Setup Options are Key-Value-Pairs carried in the SETUP message, spanning the
 // whole message body. They use a namespace separate from Message Parameters
@@ -19,7 +21,9 @@ const (
 	SetupOptionAuthorizationToken    uint64 = 0x03
 	SetupOptionMaxAuthTokenCacheSize uint64 = 0x04
 	SetupOptionAuthority             uint64 = 0x05
+	SetupOptionMaxFilterRanges       uint64 = 0x06
 	SetupOptionMOQTImplementation    uint64 = 0x07
+	SetupOptionMaxRequestUpdates     uint64 = 0x08
 )
 
 var setupOptionNames = map[uint64]string{
@@ -27,7 +31,9 @@ var setupOptionNames = map[uint64]string{
 	SetupOptionAuthorizationToken:    "AUTHORIZATION_TOKEN",
 	SetupOptionMaxAuthTokenCacheSize: "MAX_AUTH_TOKEN_CACHE_SIZE",
 	SetupOptionAuthority:             "AUTHORITY",
+	SetupOptionMaxFilterRanges:       "MAX_FILTER_RANGES",
 	SetupOptionMOQTImplementation:    "MOQT_IMPLEMENTATION",
+	SetupOptionMaxRequestUpdates:     "MAX_REQUEST_UPDATES",
 }
 
 // SetupOptionName returns the registered name of a Setup Option type.
@@ -101,6 +107,13 @@ func ImplementationOption(name string) KeyValuePair {
 	return KeyValuePair{Type: SetupOptionMOQTImplementation, ValueBytes: []byte(name)}
 }
 
+// MaxRequestUpdatesOption returns the MAX_REQUEST_UPDATES option (draft-22
+// Section 9.1.7): how many unanswered REQUEST_UPDATEs per request stream the
+// sender will accept. 0, the default, means no limit.
+func MaxRequestUpdatesOption(n uint64) KeyValuePair {
+	return KeyValuePair{Type: SetupOptionMaxRequestUpdates, ValueVarInt: n}
+}
+
 // Path returns the PATH option's value.
 func (m *Setup) Path() (string, bool) { return m.stringOption(SetupOptionPath) }
 
@@ -116,6 +129,26 @@ func (m *Setup) Implementation() (string, bool) {
 // the option is absent is 0, which prohibits token aliases.
 func (m *Setup) MaxAuthTokenCacheSize() uint64 {
 	if p, ok := m.Options.Get(SetupOptionMaxAuthTokenCacheSize); ok {
+		return p.ValueVarInt
+	}
+	return 0
+}
+
+// MaxFilterRanges returns how many Range Filter ranges the peer accepts per
+// subscription or fetch (draft-22 Section 9.1.6). The default, 0, means it
+// accepts no Range Filters at all.
+func (m *Setup) MaxFilterRanges() uint64 {
+	return m.varintOption(SetupOptionMaxFilterRanges)
+}
+
+// MaxRequestUpdates returns how many unanswered REQUEST_UPDATEs the peer
+// accepts on one request stream. The default, 0, means no limit.
+func (m *Setup) MaxRequestUpdates() uint64 {
+	return m.varintOption(SetupOptionMaxRequestUpdates)
+}
+
+func (m *Setup) varintOption(typ uint64) uint64 {
+	if p, ok := m.Options.Get(typ); ok {
 		return p.ValueVarInt
 	}
 	return 0

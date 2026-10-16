@@ -55,39 +55,59 @@ func TestMandatoryTrackPropertyRange(t *testing.T) {
 }
 
 func TestApplicationPropertyRanges(t *testing.T) {
-	for _, typ := range []uint64{0x38, 0x3F, 0x3800, 0x3FFF} {
+	for _, typ := range []uint64{0x78, 0x7F, 0x3800, 0x3FFF} {
 		assert.True(t, IsApplicationProperty(typ), "%#x", typ)
 	}
-	for _, typ := range []uint64{0x37, 0x40, 0x37FF, 0x4000} {
+	// 0x3C and 0x3E are the registered Prior Group and Object ID Gap
+	// properties, which is why the 1-byte range cannot be 0x38-0x3F.
+	for _, typ := range []uint64{0x3C, 0x3E, 0x77, 0x80, 0x37FF, 0x4000} {
 		assert.False(t, IsApplicationProperty(typ), "%#x", typ)
 	}
 }
 
 func TestPropertyScopes(t *testing.T) {
-	scope, ok := PropertyScopeOf(PropertyMaxCacheDuration)
-	require.True(t, ok)
-	assert.Equal(t, PropertyScopeTrack, scope)
+	for _, v := range []Version{Version18, Version22} {
+		scope, ok := PropertyScopeOf(PropertyMaxCacheDuration, v)
+		require.True(t, ok)
+		assert.Equal(t, PropertyScopeTrack, scope)
 
-	scope, ok = PropertyScopeOf(PropertyPriorGroupIDGap)
-	require.True(t, ok)
-	assert.Equal(t, PropertyScopeObject, scope)
+		scope, ok = PropertyScopeOf(PropertyPriorGroupIDGap, v)
+		require.True(t, ok)
+		assert.Equal(t, PropertyScopeObject, scope)
 
-	scope, ok = PropertyScopeOf(PropertyImmutableProperties)
-	require.True(t, ok)
-	assert.Equal(t, PropertyScopeTrack|PropertyScopeObject, scope)
+		scope, ok = PropertyScopeOf(PropertyImmutableProperties, v)
+		require.True(t, ok)
+		assert.Equal(t, PropertyScopeTrack|PropertyScopeObject, scope)
 
-	_, ok = PropertyScopeOf(0x99)
-	assert.False(t, ok)
+		_, ok = PropertyScopeOf(0x99, v)
+		assert.False(t, ok)
+	}
+}
+
+// Draft-19 made the delivery timeouts Object Properties as well as Track ones
+// (WG PR #1476). In draft-18 a 0x06 Object Property makes the track malformed.
+func TestDeliveryTimeoutScopeByDraft(t *testing.T) {
+	for _, typ := range []uint64{PropertyObjectDeliveryTimeout, PropertySubgroupDeliveryTimeout} {
+		scope, _ := PropertyScopeOf(typ, Version18)
+		assert.Equal(t, PropertyScopeTrack, scope)
+		scope, _ = PropertyScopeOf(typ, Version22)
+		assert.Equal(t, PropertyScopeTrack|PropertyScopeObject, scope)
+
+		pp := KVPList{{Type: typ, ValueVarInt: 100}}
+		assert.Error(t, ValidateObjectProperties(pp, Version18))
+		assert.NoError(t, ValidateObjectProperties(pp, Version22))
+		assert.NoError(t, ValidateTrackProperties(pp))
+	}
 }
 
 func TestValidateObjectProperties(t *testing.T) {
 	t.Run("a mandatory track property makes the track malformed", func(t *testing.T) {
-		err := ValidateObjectProperties(KVPList{{Type: 0x4002, ValueVarInt: 1}})
+		err := ValidateObjectProperties(KVPList{{Type: 0x4002, ValueVarInt: 1}}, Version22)
 		assert.ErrorContains(t, err, "not allowed in object scope")
 	})
 
 	t.Run("a track-scoped property is rejected", func(t *testing.T) {
-		err := ValidateObjectProperties(KVPList{{Type: PropertyMaxCacheDuration, ValueVarInt: 1}})
+		err := ValidateObjectProperties(KVPList{{Type: PropertyMaxCacheDuration, ValueVarInt: 1}}, Version22)
 		assert.ErrorContains(t, err, "not allowed in object scope")
 	})
 
@@ -95,11 +115,11 @@ func TestValidateObjectProperties(t *testing.T) {
 		assert.NoError(t, ValidateObjectProperties(KVPList{
 			{Type: PropertyPriorGroupIDGap, ValueVarInt: 1},
 			{Type: PropertyImmutableProperties, ValueVarInt: 1},
-		}))
+		}, Version22))
 	})
 
 	t.Run("an unknown property is forwarded, not rejected", func(t *testing.T) {
-		assert.NoError(t, ValidateObjectProperties(KVPList{{Type: 0x3A, ValueVarInt: 1}}))
+		assert.NoError(t, ValidateObjectProperties(KVPList{{Type: 0x3A, ValueVarInt: 1}}, Version22))
 	})
 }
 

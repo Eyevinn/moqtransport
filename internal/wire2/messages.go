@@ -1,47 +1,56 @@
 package wire2
 
-//go:generate go run ../../wiregen -draft 18 -decl messages_v18.go -dir .
+//go:generate go run ../../wiregen -draft 18 -decl messages.go -dir .
+//go:generate go run ../../wiregen -draft 22 -decl messages.go -dir .
 
-// This file declares the draft-ietf-moq-transport-18 message set. Each struct
-// mirrors one figure in Section 10 or 11 of the draft; the `proto` tags drive
-// wiregen, which writes the appendV18/parseV18 pair into <message>_v18.go.
-// Fields without a `proto` tag are not serialized.
+// This file declares the message sets of draft-ietf-moq-transport-18 and -22.
+// Each struct mirrors one figure in the drafts' control message and data
+// stream sections; the `proto` tags drive wiregen, which writes one codec pair
+// per draft into <message>_v18.go and <message>_v22.go. Fields without a
+// `proto` tag are not serialized.
+//
+// The two drafts share these structs. Their bodies are nearly identical --
+// what changed between them is almost entirely in the parameter registry,
+// which the generated codecs consult per draft -- so a difference is recorded
+// where it occurs rather than by declaring everything twice:
+//
+//   - a `//wiregen:drafts N` line limits a message to the drafts it exists in
+//     (PUBLISH_STATE_NOTIFY is draft-22 only, PUBLISH_OK draft-18 only);
+//   - a `drafts:"N"` tag limits a field the same way (GOAWAY's Request ID).
 //
 // A `max` tag records a bound the draft makes a MUST-close condition, so the
 // generated parser enforces it: 1024 bytes for a Reason Phrase, 8192 for a New
 // Session URI, and 32 fields for a Track Namespace.
 //
-// Two messages are hand-written because their bodies are conditional on a
-// field the generator cannot see: FETCH, whose Standalone or Joining structure
-// is selected by Fetch Type, and SUBGROUP_HEADER and friends in the data plane.
+// Section numbers below are draft-18's unless a draft is named: draft-21
+// renumbered the document without changing these messages.
 //
-// Draft-18 keeps almost nothing in the message bodies themselves: subscriber
-// priority, group order, forwarding, the filter and its Start Location and End
-// Group all live in Parameters. That makes the parameter registry, not this
-// file, where the semantics sit.
+// FETCH is hand-written: its draft-18 body is conditional on a Fetch Type the
+// generator cannot see, and draft-22 has a different body altogether. So are
+// SUBGROUP_HEADER and the rest of the data plane.
 //
-// When a second draft is added, the generator emits appendV20/parseV20 from a
-// sibling declaration file. Whether the two drafts share these structs (a
-// superset of fields, with each codec writing its own subset) or declare their
-// own is a decision for when draft-20's shape is settled; the -20 filter and
-// FETCH redesign is the case that will decide it.
+// Both drafts keep almost nothing in the message bodies themselves:
+// subscriber priority, group order, forwarding and the location filter all
+// live in Parameters. That makes the parameter registry, not this file, where
+// the semantics sit.
 
-// Setup is the SETUP message (Section 10.3). Setup Options span the whole
-// message body and use a registry separate from Message Parameters. There is
-// no version field: draft-18 negotiates the version purely through ALPN.
+// Setup is the SETUP message (draft-18 Section 10.3, draft-22 Section 9.1).
+// Setup Options span the whole message body and use a registry separate from
+// Message Parameters. There is no version field: the version is negotiated
+// purely through ALPN.
 type Setup struct {
 	Options KVPList `proto:"moq_kvp_list_no_length"`
 }
 
 func (m *Setup) Type() ControlMessageType { return ControlMessageTypeSetup }
 
-// GoAwayCtrl is GOAWAY as sent on the control stream (Section 10.4), where the
-// Request ID field is present. Draft-19 removes the field, at which point the
-// two GOAWAY declarations collapse back into one.
+// GoAwayCtrl is GOAWAY as sent on the control stream (draft-18 Section 10.4).
+// Draft-18 gives it a Request ID field there; draft-19 removed it, so in
+// draft-22 the two GOAWAY forms have the same body.
 type GoAwayCtrl struct {
 	NewSessionURI string `proto:"tlv_string" max:"8192"`
 	Timeout       uint64 `proto:"varint"`
-	RequestID     uint64 `proto:"varint"`
+	RequestID     uint64 `proto:"varint" drafts:"18"`
 }
 
 func (m *GoAwayCtrl) Type() ControlMessageType { return ControlMessageTypeGoAway }
@@ -119,7 +128,24 @@ type PublishDone struct {
 
 func (m *PublishDone) Type() ControlMessageType { return ControlMessageTypePublishDone }
 
-// FetchOk is the FETCH_OK message (Section 10.13).
+// PublishStateNotify is the PUBLISH_STATE_NOTIFY message (draft-22 Section
+// 9.10): the publisher's unilateral report, on a subscription's own stream,
+// that the subscription's state changed for a reason other than the
+// subscriber's REQUEST_UPDATE. It carries only the parameters that changed,
+// and is never answered.
+//
+//wiregen:drafts 22
+type PublishStateNotify struct {
+	Parameters Parameters `proto:"moq_params"`
+}
+
+func (m *PublishStateNotify) Type() ControlMessageType {
+	return ControlMessageTypePublishStateNotify
+}
+
+// FetchOk is the FETCH_OK message (Section 10.13). Its End Location is
+// encoded the same way in both drafts but means different things: the last
+// Object plus one in draft-18, the last Object itself in draft-22.
 type FetchOk struct {
 	EndOfTrack      bool       `proto:"bool"`
 	EndLocation     Location   `proto:"moq_location"`
@@ -177,15 +203,16 @@ type SubscribeTracks struct {
 
 func (m *SubscribeTracks) Type() ControlMessageType { return ControlMessageTypeSubscribeTracks }
 
-// PublishBlocked is the PUBLISH_BLOCKED message (Section 10.20), sent on a
-// SUBSCRIBE_TRACKS request stream for a track the publisher will not publish.
-// Draft-19 renames it PUBLISH_SKIPPED.
-type PublishBlocked struct {
+// PublishSkipped is the PUBLISH_SKIPPED message (draft-22 Section 9.19), sent
+// on a SUBSCRIBE_TRACKS request stream for a track the publisher will not
+// publish. Draft-18 calls it PUBLISH_BLOCKED; the codepoint and body are the
+// same.
+type PublishSkipped struct {
 	TrackNamespaceSuffix [][]byte `proto:"ntlv_bytes" max:"32"`
 	TrackName            []byte   `proto:"tlv_bytes"`
 }
 
-func (m *PublishBlocked) Type() ControlMessageType { return ControlMessageTypePublishBlocked }
+func (m *PublishSkipped) Type() ControlMessageType { return ControlMessageTypePublishSkipped }
 
 // RequestOk is the REQUEST_OK message (Section 10.5), the success response to
 // PUBLISH, REQUEST_UPDATE, TRACK_STATUS, SUBSCRIBE_NAMESPACE, SUBSCRIBE_TRACKS
@@ -204,7 +231,10 @@ func (m *RequestOk) Type() ControlMessageType { return ControlMessageTypeRequest
 
 // PublishOk is REQUEST_OK under draft-18's leftover 0x1E codepoint. See
 // ControlMessageTypePublishOk: it exists so a peer that still sends 0x1E can
-// be parsed, and is never sent by this implementation.
+// be parsed, and is never sent by this implementation. Draft-19 reserved the
+// codepoint, so in draft-22 it is an unknown message.
+//
+//wiregen:drafts 18
 type PublishOk struct {
 	Parameters      Parameters `proto:"moq_params"`
 	TrackProperties KVPList    `proto:"moq_kvp_list_no_length"`
@@ -243,10 +273,11 @@ func (m *Padding) Type() ControlMessageType {
 	return ControlMessageType(StreamTypePadding)
 }
 
-// Every declaration must carry a complete draft-18 codec. FetchHeader and
-// Padding are stream headers rather than control messages, but they are framed
-// and parsed the same way, so they satisfy the same interface.
-var _ = []MessageV18{
+// Every declaration must carry a complete codec for each draft it exists in.
+// FetchHeader and Padding are stream headers rather than control messages,
+// but they are framed and parsed the same way, so they satisfy the same
+// interface.
+var _ = []messageV18{
 	(*Setup)(nil),
 	(*GoAwayCtrl)(nil),
 	(*GoAwayReq)(nil),
@@ -263,9 +294,34 @@ var _ = []MessageV18{
 	(*NamespaceDone)(nil),
 	(*SubscribeNamespace)(nil),
 	(*SubscribeTracks)(nil),
-	(*PublishBlocked)(nil),
+	(*PublishSkipped)(nil),
 	(*RequestOk)(nil),
 	(*PublishOk)(nil),
+	(*RequestError)(nil),
+	(*FetchHeader)(nil),
+	(*Padding)(nil),
+}
+
+var _ = []messageV22{
+	(*Setup)(nil),
+	(*GoAwayCtrl)(nil),
+	(*GoAwayReq)(nil),
+	(*Subscribe)(nil),
+	(*SubscribeOk)(nil),
+	(*TrackStatus)(nil),
+	(*RequestUpdate)(nil),
+	(*Publish)(nil),
+	(*PublishDone)(nil),
+	(*PublishStateNotify)(nil),
+	(*Fetch)(nil),
+	(*FetchOk)(nil),
+	(*PublishNamespace)(nil),
+	(*Namespace)(nil),
+	(*NamespaceDone)(nil),
+	(*SubscribeNamespace)(nil),
+	(*SubscribeTracks)(nil),
+	(*PublishSkipped)(nil),
+	(*RequestOk)(nil),
 	(*RequestError)(nil),
 	(*FetchHeader)(nil),
 	(*Padding)(nil),

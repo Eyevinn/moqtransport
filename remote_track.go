@@ -508,14 +508,11 @@ func WithRendezvousTimeout(d time.Duration) SubscribeOption {
 }
 
 // WithFilter asks for part of the Track. Omitted, the subscription is
-// unfiltered.
-func WithFilter(filter SubscriptionFilter) SubscribeOption {
+// unfiltered. A filter the session's draft cannot express fails the
+// Subscribe rather than being widened.
+func WithFilter(filter LocationFilter) SubscribeOption {
 	return func(s *wire2.Subscribe) error {
-		param, err := wire2.SubscriptionFilterParameter(filter)
-		if err != nil {
-			return err
-		}
-		s.Parameters = append(s.Parameters, param)
+		s.Parameters = append(s.Parameters, wire2.LocationFilterParameter(filter))
 		return nil
 	}
 }
@@ -544,14 +541,12 @@ func WithUpdatedForward(forward bool) SubscribeUpdateOption {
 	}
 }
 
-// WithUpdatedFilter narrows or widens the subscription.
-func WithUpdatedFilter(filter SubscriptionFilter) SubscribeUpdateOption {
+// WithUpdatedFilter narrows or widens the subscription. On a draft-22
+// session the zero LocationFilter removes the filter; draft-18 has no way to
+// say that, and sends a filter starting at {0, 0}, which admits the same.
+func WithUpdatedFilter(filter LocationFilter) SubscribeUpdateOption {
 	return func(u *wire2.RequestUpdate) error {
-		param, err := wire2.SubscriptionFilterParameter(filter)
-		if err != nil {
-			return err
-		}
-		u.Parameters = append(u.Parameters, param)
+		u.Parameters = append(u.Parameters, wire2.LocationFilterParameter(filter))
 		return nil
 	}
 }

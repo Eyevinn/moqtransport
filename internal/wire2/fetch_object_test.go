@@ -14,7 +14,7 @@ import (
 // the one before it.
 func writeFetch(t *testing.T, order GroupOrder, objects []*FetchObject) []*FetchObject {
 	t.Helper()
-	w := NewFetchWriter(order)
+	w := NewFetchWriter(order, Version18)
 	var buf []byte
 	var err error
 	for _, obj := range objects {
@@ -22,7 +22,7 @@ func writeFetch(t *testing.T, order GroupOrder, objects []*FetchObject) []*Fetch
 		require.NoError(t, err)
 	}
 
-	r := NewFetchReader(reader(buf), order)
+	r := NewFetchReader(reader(buf), order, Version18)
 	got := make([]*FetchObject, 0, len(objects))
 	for {
 		obj, err := r.Next()
@@ -65,7 +65,7 @@ func TestFetchObjectRoundTrip(t *testing.T) {
 // keeps a record in the Group before it. Get that backwards and every Object
 // after the first lands in its own Group.
 func TestFetchObjectSameGroupOmitsDelta(t *testing.T) {
-	w := NewFetchWriter(GroupOrderAscending)
+	w := NewFetchWriter(GroupOrderAscending, Version18)
 	buf, err := w.AppendObject(nil, &FetchObject{GroupID: 9, ObjectID: 0, Priority: 1, Payload: []byte("a")})
 	require.NoError(t, err)
 	firstLen := len(buf)
@@ -92,13 +92,13 @@ func TestFetchObjectDescendingGroups(t *testing.T) {
 	}
 
 	// Groups that do not move in the declared direction cannot be encoded.
-	w := NewFetchWriter(GroupOrderDescending)
+	w := NewFetchWriter(GroupOrderDescending, Version18)
 	buf, err := w.AppendObject(nil, &FetchObject{GroupID: 5, ObjectID: 0, Priority: 1})
 	require.NoError(t, err)
 	_, err = w.AppendObject(buf, &FetchObject{GroupID: 6, ObjectID: 0, Priority: 1})
 	assert.ErrorIs(t, err, errGroupIDNotDescending)
 
-	w = NewFetchWriter(GroupOrderAscending)
+	w = NewFetchWriter(GroupOrderAscending, Version18)
 	buf, err = w.AppendObject(nil, &FetchObject{GroupID: 5, ObjectID: 0, Priority: 1})
 	require.NoError(t, err)
 	_, err = w.AppendObject(buf, &FetchObject{GroupID: 4, ObjectID: 0, Priority: 1})
@@ -131,17 +131,39 @@ func TestFetchObjectEndOfRange(t *testing.T) {
 	assert.Equal(t, uint64(4), got[3].ObjectID)
 }
 
+// End of Timed-Out Range (0x20C) is draft-22's: a relay reports the Objects it
+// stopped waiting for when the Fill Timeout ran out. Draft-18 has no such
+// value, and reading or writing one there is the same error as any other
+// unknown flags.
+func TestFetchObjectEndOfTimedOutRange(t *testing.T) {
+	marker := &FetchObject{GroupID: 3, ObjectID: 5, EndOfRange: EndOfRangeTimedOut}
+
+	buf, err := NewFetchWriter(GroupOrderAscending, Version22).AppendObject(nil, marker)
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x82, 0x0C, 0x03, 0x05}, buf)
+
+	got, err := NewFetchReader(reader(buf), GroupOrderAscending, Version22).Next()
+	require.NoError(t, err)
+	assert.Equal(t, marker, got)
+
+	_, err = NewFetchReader(reader(buf), GroupOrderAscending, Version18).Next()
+	assert.ErrorIs(t, err, errInvalidSerializationFlags)
+	_, err = NewFetchWriter(GroupOrderAscending, Version18).AppendObject(nil, marker)
+	assert.ErrorIs(t, err, errInvalidSerializationFlags)
+	assert.Equal(t, "END_OF_TIMED_OUT_RANGE", EndOfRangeTimedOut.String())
+}
+
 // Below 128 the Serialization Flags are a bitfield; above it only the two End
 // of Range values exist and everything else closes the session.
 func TestFetchObjectInvalidSerializationFlags(t *testing.T) {
 	for _, flags := range []uint64{0x80, 0x8B, 0x8D, 0x100, 0x10D, 0x4000} {
 		buf := vi64.Append(nil, flags)
 		buf = append(buf, 0x01, 0x02)
-		_, err := NewFetchReader(reader(buf), GroupOrderAscending).Next()
+		_, err := NewFetchReader(reader(buf), GroupOrderAscending, Version18).Next()
 		assert.ErrorIs(t, err, errInvalidSerializationFlags, "flags %#x", flags)
 	}
 
-	_, err := NewFetchWriter(GroupOrderAscending).AppendObject(nil, &FetchObject{EndOfRange: 0x99})
+	_, err := NewFetchWriter(GroupOrderAscending, Version18).AppendObject(nil, &FetchObject{EndOfRange: 0x99})
 	assert.ErrorIs(t, err, errInvalidSerializationFlags)
 }
 
@@ -155,7 +177,7 @@ func TestFetchObjectFirstRecordNeedsAbsoluteLocation(t *testing.T) {
 	} {
 		buf := vi64.Append(nil, flags)
 		buf = append(buf, 0x01, 0x02, 0x03, 0x00)
-		_, err := NewFetchReader(reader(buf), GroupOrderAscending).Next()
+		_, err := NewFetchReader(reader(buf), GroupOrderAscending, Version18).Next()
 		assert.ErrorIs(t, err, errFetchObjectNeedsPrior, "flags %#x", flags)
 	}
 
@@ -167,7 +189,7 @@ func TestFetchObjectFirstRecordNeedsAbsoluteLocation(t *testing.T) {
 	} {
 		buf := vi64.Append(nil, flags)
 		buf = append(buf, 0x01, 0x02, 0x80, 0x00)
-		_, err := NewFetchReader(reader(buf), GroupOrderAscending).Next()
+		_, err := NewFetchReader(reader(buf), GroupOrderAscending, Version18).Next()
 		assert.ErrorIs(t, err, errFetchObjectNeedsPrior, "flags %#x", flags)
 	}
 }
@@ -188,7 +210,7 @@ func TestFetchObjectReaderResolvesCompactForms(t *testing.T) {
 	buf = vi64.Append(buf, uint64(FetchSubgroupPriorPlusOne)|fetchFlagObjectIDDelta)
 	buf = append(buf, 0x02, 0x00)
 
-	r := NewFetchReader(reader(buf), GroupOrderAscending)
+	r := NewFetchReader(reader(buf), GroupOrderAscending, Version18)
 	first, err := r.Next()
 	require.NoError(t, err)
 	assert.Equal(t, uint64(3), first.GroupID)
@@ -224,7 +246,7 @@ func TestFetchObjectPriorAcrossEndOfRange(t *testing.T) {
 	buf = vi64.Append(buf, uint64(FetchSubgroupPrior))
 	buf = append(buf, 0x00)
 
-	r := NewFetchReader(reader(buf), GroupOrderAscending)
+	r := NewFetchReader(reader(buf), GroupOrderAscending, Version18)
 	_, err := r.Next()
 	require.NoError(t, err)
 	marker, err := r.Next()
@@ -240,7 +262,7 @@ func TestFetchObjectPriorAcrossEndOfRange(t *testing.T) {
 }
 
 func TestFetchObjectEndOfRangeRejectsPayload(t *testing.T) {
-	_, err := NewFetchWriter(GroupOrderAscending).AppendObject(nil, &FetchObject{
+	_, err := NewFetchWriter(GroupOrderAscending, Version18).AppendObject(nil, &FetchObject{
 		GroupID: 1, ObjectID: 2, EndOfRange: EndOfRangeUnknown, Payload: []byte("x"),
 	})
 	assert.ErrorIs(t, err, errEndOfRangeWithPayload)
@@ -251,7 +273,7 @@ func TestFetchObjectEndOfRangeRejectsPayload(t *testing.T) {
 // quiche, moqtail, moq-go and aiomoqt all resume parsing at the next Object's
 // flags, so a trailing zero here desynchronises every one of them.
 func TestFetchObjectEndOfRangeWireShape(t *testing.T) {
-	buf, err := NewFetchWriter(GroupOrderAscending).AppendObject(nil, &FetchObject{
+	buf, err := NewFetchWriter(GroupOrderAscending, Version18).AppendObject(nil, &FetchObject{
 		GroupID: 5, ObjectID: 10, EndOfRange: EndOfRangeUnknown,
 	})
 	require.NoError(t, err)
@@ -262,7 +284,7 @@ func TestFetchObjectEndOfRangeWireShape(t *testing.T) {
 }
 
 func TestFetchObjectTruncated(t *testing.T) {
-	w := NewFetchWriter(GroupOrderAscending)
+	w := NewFetchWriter(GroupOrderAscending, Version18)
 	full, err := w.AppendObject(nil, &FetchObject{
 		GroupID: 300, SubgroupID: 400, ObjectID: 500, Priority: 3,
 		Properties: KVPList{{Type: PropertyPriorObjectIDGap, ValueVarInt: 1}},
@@ -271,7 +293,7 @@ func TestFetchObjectTruncated(t *testing.T) {
 	require.NoError(t, err)
 
 	for n := 1; n < len(full); n++ {
-		_, err := NewFetchReader(reader(full[:n]), GroupOrderAscending).Next()
+		_, err := NewFetchReader(reader(full[:n]), GroupOrderAscending, Version18).Next()
 		assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "truncated to %d bytes", n)
 	}
 }

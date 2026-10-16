@@ -32,6 +32,10 @@ type controlStreamPair struct {
 	remote ReceiveStream
 	parser *wire2.ControlMessageParser
 
+	// version is the draft the session negotiated, which every message on
+	// the pair is encoded in.
+	version wire2.Version
+
 	// ready is closed once the peer's SETUP has been parsed. Everything that
 	// depends on knowing the peer's options waits on it, and closing a channel
 	// rather than setting a flag means the wait is race-free without a lock on
@@ -50,8 +54,8 @@ type controlStreamPair struct {
 	remoteErr     error
 }
 
-func newControlStreamPair(logger qlogger) *controlStreamPair {
-	return &controlStreamPair{qlog: logger, ready: make(chan struct{})}
+func newControlStreamPair(logger qlogger, version wire2.Version) *controlStreamPair {
+	return &controlStreamPair{qlog: logger, version: version, ready: make(chan struct{})}
 }
 
 // open opens our control stream and sends setup on it.
@@ -68,7 +72,7 @@ func (p *controlStreamPair) open(ctx context.Context, conn Connection, setup *wi
 	// streams are prioritized highest of everything this session sends.
 	setStreamPriority(stream, StreamPriority{Urgency: UrgencyControl})
 
-	buf, err := wire2.AppendControlMessage(nil, setup)
+	buf, err := wire2.AppendControlMessage(nil, setup, p.version)
 	if err != nil {
 		return fmt.Errorf("encoding SETUP: %w", err)
 	}
@@ -83,11 +87,11 @@ func (p *controlStreamPair) open(ctx context.Context, conn Connection, setup *wi
 
 // write sends a control message on our half of the pair. Only SETUP and GOAWAY
 // belong here; everything else travels on its own request stream.
-func (p *controlStreamPair) write(msg wire2.MessageV18) error {
+func (p *controlStreamPair) write(msg wire2.ControlMessage) error {
 	if p.local == nil {
 		return errControlStreamNotOpen
 	}
-	buf, err := wire2.AppendControlMessage(nil, msg)
+	buf, err := wire2.AppendControlMessage(nil, msg, p.version)
 	if err != nil {
 		return err
 	}

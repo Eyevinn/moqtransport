@@ -119,7 +119,7 @@ func TestSubgroupObjectDeltaEncoding(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, byte(0x00), consecutive[firstLen])
 
-	r := NewSubgroupReader(header, reader(buf))
+	r := NewSubgroupReader(header, reader(buf), Version18)
 	for _, want := range objects {
 		got, err := r.Next()
 		require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestSubgroupIDFromFirstObject(t *testing.T) {
 	assert.Equal(t, uint64(42), w.Header.SubgroupID)
 
 	parsed := &SubgroupHeader{TrackAlias: 1, GroupID: 2, SubgroupIDMode: SubgroupIDFirstObject}
-	r := NewSubgroupReader(parsed, reader(buf))
+	r := NewSubgroupReader(parsed, reader(buf), Version18)
 	assert.Zero(t, parsed.SubgroupID, "not known until the first object arrives")
 	_, err = r.Next()
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestSubgroupObjectStatus(t *testing.T) {
 	buf, err = w.AppendObject(buf, &SubgroupObject{ObjectID: 2, Status: ObjectStatusEndOfGroup})
 	require.NoError(t, err)
 
-	r := NewSubgroupReader(header, reader(buf))
+	r := NewSubgroupReader(header, reader(buf), Version18)
 	first, err := r.Next()
 	require.NoError(t, err)
 	assert.Equal(t, ObjectStatusNormal, first.Status)
@@ -181,7 +181,7 @@ func TestSubgroupObjectStatus(t *testing.T) {
 	// An undefined status on the wire is a PROTOCOL_VIOLATION, not something
 	// to skip: Section 11.2.1.1 leaves no room for extension.
 	bad := []byte{0x00, 0x00, 0x02} // delta 0, payload length 0, status 0x2
-	_, err = NewSubgroupReader(header, reader(bad)).Next()
+	_, err = NewSubgroupReader(header, reader(bad), Version18).Next()
 	assert.ErrorIs(t, err, errInvalidObjectStatus)
 }
 
@@ -199,7 +199,7 @@ func TestSubgroupObjectProperties(t *testing.T) {
 	buf, err = w.AppendObject(buf, &SubgroupObject{ObjectID: 2, Payload: []byte("b")})
 	require.NoError(t, err)
 
-	r := NewSubgroupReader(header, reader(buf))
+	r := NewSubgroupReader(header, reader(buf), Version18)
 	first, err := r.Next()
 	require.NoError(t, err)
 	assert.Equal(t, props, first.Properties)
@@ -225,7 +225,7 @@ func TestSubgroupObjectRejectsTrackScopedProperty(t *testing.T) {
 
 	buf := append([]byte{0x00}, block...) // object ID delta 0, then properties
 	buf = append(buf, 0x01, byte('x'))    // payload length 1, payload
-	_, err := NewSubgroupReader(header, reader(buf)).Next()
+	_, err := NewSubgroupReader(header, reader(buf), Version18).Next()
 	assert.ErrorIs(t, err, propertyScopeError{propertyType: 0x4000, scope: PropertyScopeObject})
 }
 
@@ -247,7 +247,7 @@ func TestSubgroupObjectIDOverflow(t *testing.T) {
 	buf = vi64.Append(buf, maxUint64)
 	buf = append(buf, 0x01, byte('b'))
 
-	r := NewSubgroupReader(header, reader(buf))
+	r := NewSubgroupReader(header, reader(buf), Version18)
 	_, err := r.Next()
 	require.NoError(t, err)
 	_, err = r.Next()
@@ -267,7 +267,7 @@ func TestSubgroupObjectTruncated(t *testing.T) {
 	require.NoError(t, err)
 
 	for n := 1; n < len(full); n++ {
-		_, err := NewSubgroupReader(header, reader(full[:n])).Next()
+		_, err := NewSubgroupReader(header, reader(full[:n]), Version18).Next()
 		assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "truncated to %d bytes", n)
 	}
 }

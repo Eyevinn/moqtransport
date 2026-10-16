@@ -127,10 +127,14 @@ func AppendObjectDatagram(buf []byte, d *ObjectDatagram) ([]byte, error) {
 	return append(buf, d.Payload...), nil
 }
 
-// ParseObjectDatagram reads a whole datagram. A datagram is a single message
-// with no framing of its own, so data must be exactly one datagram: the
-// payload is whatever follows the header, with no length field to bound it.
-func ParseObjectDatagram(data []byte) (*ObjectDatagram, error) {
+// ParseObjectDatagram reads a whole datagram on a session speaking version. A
+// datagram is a single message with no framing of its own, so data must be
+// exactly one datagram: the payload is whatever follows the header, with no
+// length field to bound it.
+//
+// The Type Flags are the same in both drafts: draft-19 restated draft-18's
+// list of valid types as a bitfield without changing which values are valid.
+func ParseObjectDatagram(data []byte, version Version) (*ObjectDatagram, error) {
 	t, n, err := vi64.Parse(data)
 	if err != nil {
 		return nil, err
@@ -187,7 +191,7 @@ func ParseObjectDatagram(data []byte) (*ObjectDatagram, error) {
 		if _, err = d.Properties.parseAll(data[:length]); err != nil {
 			return nil, err
 		}
-		if err = ValidateObjectProperties(d.Properties); err != nil {
+		if err = ValidateObjectProperties(d.Properties, version); err != nil {
 			return nil, err
 		}
 		data = data[length:]

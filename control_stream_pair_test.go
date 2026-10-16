@@ -19,7 +19,7 @@ import (
 // the stream type and the message type.
 func setupBytes(t *testing.T, options wire2.KVPList) []byte {
 	t.Helper()
-	buf, err := wire2.AppendControlMessage(nil, &wire2.Setup{Options: options})
+	buf, err := wire2.AppendControlMessage(nil, &wire2.Setup{Options: options}, wire2.Version18)
 	require.NoError(t, err)
 	return buf
 }
@@ -28,7 +28,7 @@ func setupBytes(t *testing.T, options wire2.KVPList) []byte {
 // type, then hand it back to the parser.
 func adoptFrom(t *testing.T, p *controlStreamPair, r io.Reader) error {
 	t.Helper()
-	parser := wire2.NewControlMessageParser(r, wire2.ScopeControl)
+	parser := wire2.NewControlMessageParser(r, wire2.ScopeControl, wire2.Version18)
 	streamType, kind, err := wire2.ReadStreamType(parser.Reader())
 	require.NoError(t, err)
 	require.Equal(t, wire2.StreamTypeSetup, streamType)
@@ -45,12 +45,12 @@ func TestControlStreamPairOpenSendsSetup(t *testing.T) {
 	conn.EXPECT().OpenUniStreamSync(gomock.Any()).Return(stream, nil)
 	stream.EXPECT().Write(gomock.Any()).DoAndReturn(written.Write)
 
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	setup := &wire2.Setup{Options: wire2.KVPList{wire2.ImplementationOption("test/1.0")}}
 	require.NoError(t, p.open(context.Background(), conn, setup))
 
 	// What went out must parse back as a control stream opening with SETUP.
-	parser := wire2.NewControlMessageParser(bytes.NewReader(written.Bytes()), wire2.ScopeControl)
+	parser := wire2.NewControlMessageParser(bytes.NewReader(written.Bytes()), wire2.ScopeControl, wire2.Version18)
 	streamType, kind, err := wire2.ReadStreamType(parser.Reader())
 	require.NoError(t, err)
 	assert.Equal(t, wire2.StreamTypeSetup, streamType)
@@ -69,7 +69,7 @@ func TestControlStreamPairDoesNotOpenUntilAsked(t *testing.T) {
 	// No EXPECT calls: touching the connection here fails the test.
 	_ = conn
 
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	assert.Nil(t, p.local)
 
 	err := p.write(&wire2.GoAwayCtrl{})
@@ -77,7 +77,7 @@ func TestControlStreamPairDoesNotOpenUntilAsked(t *testing.T) {
 }
 
 func TestControlStreamPairAdoptRemote(t *testing.T) {
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	options := wire2.KVPList{
 		wire2.MaxAuthTokenCacheSizeOption(2048),
 		wire2.ImplementationOption("peer/2.0"),
@@ -94,7 +94,7 @@ func TestControlStreamPairAdoptRemote(t *testing.T) {
 }
 
 func TestControlStreamPairAwaitBlocksUntilSetupArrives(t *testing.T) {
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -112,7 +112,7 @@ func TestControlStreamPairAwaitBlocksUntilSetupArrives(t *testing.T) {
 // a channel and not a flag: a peer that opens a control stream and then sends
 // nonsense must fail the wait, not hang it until the setup deadline.
 func TestControlStreamPairMalformedSetupReleasesWaiters(t *testing.T) {
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 
 	// The control stream type followed by a truncated frame.
 	truncated := []byte{0xaf, 0x00, 0x00}
@@ -124,10 +124,10 @@ func TestControlStreamPairMalformedSetupReleasesWaiters(t *testing.T) {
 }
 
 func TestControlStreamPairRejectsSecondControlStream(t *testing.T) {
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	require.NoError(t, adoptFrom(t, p, bytes.NewReader(setupBytes(t, wire2.KVPList{}))))
 
-	parser := wire2.NewControlMessageParser(bytes.NewReader(setupBytes(t, wire2.KVPList{})), wire2.ScopeControl)
+	parser := wire2.NewControlMessageParser(bytes.NewReader(setupBytes(t, wire2.KVPList{})), wire2.ScopeControl, wire2.Version18)
 	_, _, err := wire2.ReadStreamType(parser.Reader())
 	require.NoError(t, err)
 	assert.ErrorIs(t, p.adoptRemote(nil, parser), errDuplicateControlStream)
@@ -138,10 +138,10 @@ func TestControlStreamPairRejectsSecondControlStream(t *testing.T) {
 func TestControlStreamPairReadsGoAwayAfterSetup(t *testing.T) {
 	stream := setupBytes(t, wire2.KVPList{})
 	goaway := &wire2.GoAwayCtrl{NewSessionURI: "moqt://other.example/", Timeout: 5000, RequestID: 12}
-	buf, err := wire2.AppendControlMessage(stream, goaway)
+	buf, err := wire2.AppendControlMessage(stream, goaway, wire2.Version18)
 	require.NoError(t, err)
 
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	require.NoError(t, adoptFrom(t, p, bytes.NewReader(buf)))
 
 	msg, err := p.read()
@@ -158,13 +158,13 @@ func TestControlStreamPairWrite(t *testing.T) {
 	conn.EXPECT().OpenUniStreamSync(gomock.Any()).Return(stream, nil)
 	stream.EXPECT().Write(gomock.Any()).DoAndReturn(written.Write).Times(2)
 
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	require.NoError(t, p.open(context.Background(), conn, &wire2.Setup{Options: wire2.KVPList{}}))
 
 	goaway := &wire2.GoAwayCtrl{Timeout: 1}
 	require.NoError(t, p.write(goaway))
 
-	parser := wire2.NewControlMessageParser(bytes.NewReader(written.Bytes()), wire2.ScopeControl)
+	parser := wire2.NewControlMessageParser(bytes.NewReader(written.Bytes()), wire2.ScopeControl, wire2.Version18)
 	streamType, _, err := wire2.ReadStreamType(parser.Reader())
 	require.NoError(t, err)
 	_, err = parser.ParseBody(wire2.ControlMessageType(streamType))
@@ -181,7 +181,7 @@ func TestControlStreamPairOpenPropagatesError(t *testing.T) {
 	wantErr := errors.New("no streams available")
 	conn.EXPECT().OpenUniStreamSync(gomock.Any()).Return(nil, wantErr)
 
-	p := newControlStreamPair(qlogger{})
+	p := newControlStreamPair(qlogger{}, wire2.Version18)
 	err := p.open(context.Background(), conn, &wire2.Setup{Options: wire2.KVPList{}})
 	assert.ErrorIs(t, err, wantErr)
 }

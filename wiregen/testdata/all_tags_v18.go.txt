@@ -27,7 +27,7 @@ func (m *allTags) appendV18(buf []byte) ([]byte, error) {
 		buf = append(buf, 0)
 	}
 	buf = m.EndLocation.append(buf)
-	buf, err = m.Parameters.appendNum(buf)
+	buf, err = m.Parameters.appendNum(buf, Version18)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (m *allTags) parseV18(data []byte) error {
 	}
 	data = data[n:]
 
-	n, err = m.Parameters.parseNum(data)
+	n, err = m.Parameters.parseNum(data, Version18)
 	if err != nil {
 		return err
 	}

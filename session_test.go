@@ -119,7 +119,7 @@ func TestSessionSubscribeEndToEnd(t *testing.T) {
 
 		track, err := client.Subscribe(ctx, []string{"example.com", "live"}, "video0",
 			WithSubscriberPriority(3),
-			WithFilter(SubscriptionFilter{Type: FilterLargestObject}),
+			WithFilter(NextObject()),
 		)
 		require.NoError(t, err)
 

@@ -45,7 +45,7 @@ func receiveAll(t *testing.T, raw []byte, defaultPriority uint8) ([]*Object, err
 	require.NoError(t, err)
 
 	var got []*Object
-	err = newSubgroupReceiver(nil, header, r, defaultPriority, qlogger{}).receive(func(o *Object) error {
+	err = newSubgroupReceiver(nil, header, r, defaultPriority, qlogger{}, wire2.Version18).receive(func(o *Object) error {
 		got = append(got, o)
 		return nil
 	})
@@ -177,7 +177,7 @@ func TestSubgroupReceiveStreamError(t *testing.T) {
 	require.NoError(t, err)
 
 	var delivered int
-	err = newSubgroupReceiver(nil, header, r, 0, qlogger{}).receive(func(*Object) error {
+	err = newSubgroupReceiver(nil, header, r, 0, qlogger{}, wire2.Version18).receive(func(*Object) error {
 		delivered++
 		return nil
 	})

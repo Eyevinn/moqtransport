@@ -19,7 +19,7 @@ func TestFramingRoundTrip(t *testing.T) {
 	cases := []struct {
 		name  string
 		scope StreamScope
-		msg   MessageV18
+		msg   ControlMessage
 	}{
 		{"SETUP", ScopeControl, &Setup{Options: KVPList{{Type: 1, ValueBytes: []byte("/live")}}}},
 		{"GOAWAY on the control stream", ScopeControl, &GoAwayCtrl{NewSessionURI: "moqt://b.example/", Timeout: 100, RequestID: 6}},
@@ -37,21 +37,41 @@ func TestFramingRoundTrip(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			buf, err := AppendControlMessage(nil, tc.msg)
+			buf, err := AppendControlMessage(nil, tc.msg, Version18)
 			require.NoError(t, err)
 
-			got, err := NewControlMessageParser(bytes.NewReader(buf), tc.scope).Parse()
+			got, err := NewControlMessageParser(bytes.NewReader(buf), tc.scope, Version18).Parse()
 			require.NoError(t, err)
 			assert.Equal(t, tc.msg, got)
 		})
 	}
 }
 
+// The two drafts' dispatch tables differ in two codepoints: 0x22 is
+// PUBLISH_STATE_NOTIFY from draft-20, and 0x1E is PUBLISH_OK only in draft-18.
+func TestDispatchTablesPerDraft(t *testing.T) {
+	notify := &PublishStateNotify{Parameters: Parameters{LocationParameter(ParamLargestObject, Location{Group: 1})}}
+	buf, err := AppendControlMessage(nil, notify, Version22)
+	require.NoError(t, err)
+	got, err := NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version22).Parse()
+	require.NoError(t, err)
+	assert.Equal(t, notify, got)
+	_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18).Parse()
+	assert.ErrorAs(t, err, &unknownControlMessageTypeError{})
+
+	publishOk, err := AppendControlMessage(nil, &PublishOk{Parameters: Parameters{}}, Version18)
+	require.NoError(t, err)
+	_, err = NewControlMessageParser(bytes.NewReader(publishOk), ScopeRequest, Version18).Parse()
+	require.NoError(t, err)
+	_, err = NewControlMessageParser(bytes.NewReader(publishOk), ScopeRequest, Version22).Parse()
+	assert.ErrorAs(t, err, &unknownControlMessageTypeError{})
+}
+
 // TestFramingLengthField pins the frame layout: a vi64 type, then the body
 // length as a fixed 16-bit big-endian integer, then the body.
 func TestFramingLengthField(t *testing.T) {
 	msg := &GoAwayReq{NewSessionURI: "", Timeout: 0}
-	buf, err := AppendControlMessage(nil, msg)
+	buf, err := AppendControlMessage(nil, msg, Version18)
 	require.NoError(t, err)
 
 	// Type 0x10, length 0x0002, body 0x00 0x00.
@@ -59,7 +79,7 @@ func TestFramingLengthField(t *testing.T) {
 }
 
 func TestFramingSetupTypeIsTwoBytes(t *testing.T) {
-	buf, err := AppendControlMessage(nil, &Setup{Options: KVPList{}})
+	buf, err := AppendControlMessage(nil, &Setup{Options: KVPList{}}, Version18)
 	require.NoError(t, err)
 	// 0x2F00 does not fit the 1-byte vi64 form, so the type occupies two bytes
 	// before the fixed 16-bit length.
@@ -73,13 +93,13 @@ func TestAppendRejectsOversizedBody(t *testing.T) {
 		TrackName:      []byte{},
 		Parameters:     Parameters{BytesParameter(ParamAuthorizationToken, make([]byte, maxValueLength))},
 	}
-	_, err := AppendControlMessage(nil, msg)
+	_, err := AppendControlMessage(nil, msg, Version18)
 	assert.ErrorIs(t, err, errControlMessageTooLong)
 }
 
 func TestAppendPreservesExistingBuffer(t *testing.T) {
 	prefix := []byte{0xde, 0xad}
-	buf, err := AppendControlMessage(prefix, &GoAwayReq{Timeout: 0})
+	buf, err := AppendControlMessage(prefix, &GoAwayReq{Timeout: 0}, Version18)
 	require.NoError(t, err)
 	assert.Equal(t, prefix, buf[:2])
 }
@@ -88,13 +108,13 @@ func TestAppendPreservesExistingBuffer(t *testing.T) {
 // body short: the message wants bytes the frame did not include.
 func TestParseRejectsLengthShorterThanBody(t *testing.T) {
 	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: Parameters{}}
-	buf, err := AppendControlMessage(nil, msg)
+	buf, err := AppendControlMessage(nil, msg, Version18)
 	require.NoError(t, err)
 
 	binary.BigEndian.PutUint16(buf[1:3], uint16(len(buf)-3-1))
 	buf = buf[:len(buf)-1]
 
-	_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest).Parse()
+	_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18).Parse()
 	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
@@ -102,23 +122,23 @@ func TestParseRejectsLengthShorterThanBody(t *testing.T) {
 // frame declared more bytes than the message consumed.
 func TestParseRejectsLengthLongerThanBody(t *testing.T) {
 	msg := &GoAwayReq{NewSessionURI: "", Timeout: 0}
-	buf, err := AppendControlMessage(nil, msg)
+	buf, err := AppendControlMessage(nil, msg, Version18)
 	require.NoError(t, err)
 
 	buf = append(buf, 0x00)
 	binary.BigEndian.PutUint16(buf[1:3], uint16(len(buf)-3))
 
-	_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest).Parse()
+	_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18).Parse()
 	assert.ErrorIs(t, err, errTrailingBytes)
 }
 
 func TestParseTruncatedFrame(t *testing.T) {
 	msg := &Subscribe{RequestID: 0, TrackNamespace: [][]byte{[]byte("ns")}, TrackName: []byte("v0"), Parameters: Parameters{}}
-	full, err := AppendControlMessage(nil, msg)
+	full, err := AppendControlMessage(nil, msg, Version18)
 	require.NoError(t, err)
 
 	for i := 1; i < len(full); i++ {
-		_, err := NewControlMessageParser(bytes.NewReader(full[:i]), ScopeRequest).Parse()
+		_, err := NewControlMessageParser(bytes.NewReader(full[:i]), ScopeRequest, Version18).Parse()
 		assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "truncating to %d bytes", i)
 	}
 }
@@ -126,7 +146,7 @@ func TestParseTruncatedFrame(t *testing.T) {
 // TestParseCleanEndOfStream keeps io.EOF meaning "no more messages", which the
 // read loops rely on to tell a closed stream from a broken one.
 func TestParseCleanEndOfStream(t *testing.T) {
-	_, err := NewControlMessageParser(bytes.NewReader(nil), ScopeRequest).Parse()
+	_, err := NewControlMessageParser(bytes.NewReader(nil), ScopeRequest, Version18).Parse()
 	assert.ErrorIs(t, err, io.EOF)
 	assert.NotErrorIs(t, err, io.ErrUnexpectedEOF)
 }
@@ -135,12 +155,12 @@ func TestParseSequentialMessages(t *testing.T) {
 	first := &GoAwayReq{Timeout: 1}
 	second := &RequestOk{Parameters: Parameters{}, TrackProperties: KVPList{}}
 
-	buf, err := AppendControlMessage(nil, first)
+	buf, err := AppendControlMessage(nil, first, Version18)
 	require.NoError(t, err)
-	buf, err = AppendControlMessage(buf, second)
+	buf, err = AppendControlMessage(buf, second, Version18)
 	require.NoError(t, err)
 
-	p := NewControlMessageParser(bytes.NewReader(buf), ScopeRequest)
+	p := NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18)
 	got, err := p.Parse()
 	require.NoError(t, err)
 	assert.Equal(t, first, got)
@@ -155,37 +175,37 @@ func TestParseSequentialMessages(t *testing.T) {
 // different things on the two stream kinds.
 func TestScopeSelectsTheMessage(t *testing.T) {
 	t.Run("GOAWAY differs by scope", func(t *testing.T) {
-		buf, err := AppendControlMessage(nil, &GoAwayCtrl{NewSessionURI: "", Timeout: 5, RequestID: 8})
+		buf, err := AppendControlMessage(nil, &GoAwayCtrl{NewSessionURI: "", Timeout: 5, RequestID: 8}, Version18)
 		require.NoError(t, err)
 
-		got, err := NewControlMessageParser(bytes.NewReader(buf), ScopeControl).Parse()
+		got, err := NewControlMessageParser(bytes.NewReader(buf), ScopeControl, Version18).Parse()
 		require.NoError(t, err)
 		assert.IsType(t, &GoAwayCtrl{}, got)
 
 		// The same bytes read as a request-stream GOAWAY have a trailing
 		// Request ID the message does not define.
-		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest).Parse()
+		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18).Parse()
 		assert.ErrorIs(t, err, errTrailingBytes)
 	})
 
 	t.Run("SUBSCRIBE is not a control stream message", func(t *testing.T) {
-		buf, err := AppendControlMessage(nil, &Subscribe{TrackNamespace: [][]byte{}, TrackName: []byte{}, Parameters: Parameters{}})
+		buf, err := AppendControlMessage(nil, &Subscribe{TrackNamespace: [][]byte{}, TrackName: []byte{}, Parameters: Parameters{}}, Version18)
 		require.NoError(t, err)
-		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeControl).Parse()
+		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeControl, Version18).Parse()
 		assert.ErrorContains(t, err, "unknown control message type")
 	})
 
 	t.Run("SETUP is not a request stream message", func(t *testing.T) {
-		buf, err := AppendControlMessage(nil, &Setup{Options: KVPList{}})
+		buf, err := AppendControlMessage(nil, &Setup{Options: KVPList{}}, Version18)
 		require.NoError(t, err)
-		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest).Parse()
+		_, err = NewControlMessageParser(bytes.NewReader(buf), ScopeRequest, Version18).Parse()
 		assert.ErrorContains(t, err, "unknown control message type")
 	})
 }
 
 func TestParseUnknownMessageType(t *testing.T) {
 	// Type 0x60, zero-length body.
-	_, err := NewControlMessageParser(bytes.NewReader([]byte{0x60, 0x00, 0x00}), ScopeRequest).Parse()
+	_, err := NewControlMessageParser(bytes.NewReader([]byte{0x60, 0x00, 0x00}), ScopeRequest, Version18).Parse()
 	assert.ErrorContains(t, err, "unknown control message type")
 }
 
@@ -221,7 +241,7 @@ func TestFetchHeaderCodepointIsScoped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, UniStreamFetch, kind)
 
-	msg, err := newControlMessage(ScopeRequest, ControlMessageType(0x5))
+	msg, err := newControlMessage(ScopeRequest, ControlMessageType(0x5), Version22)
 	require.NoError(t, err)
 	assert.IsType(t, &RequestError{}, msg)
 }
@@ -275,7 +295,7 @@ func TestOpensRequestStream(t *testing.T) {
 		ControlMessageTypeFetchOk,
 		ControlMessageTypePublishOk,
 		ControlMessageTypePublishDone,
-		ControlMessageTypePublishBlocked,
+		ControlMessageTypePublishSkipped,
 		ControlMessageTypeNamespace,
 		ControlMessageTypeNamespaceDone,
 	}

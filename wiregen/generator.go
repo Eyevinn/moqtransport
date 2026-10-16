@@ -160,13 +160,16 @@ var codecs = map[string]codec{
 	// Key-Value-Pairs: the value encoding comes from each parameter's
 	// definition rather than from the parity of its Type, which is why the
 	// block is bounded by a count and an unknown type is fatal.
+	//
+	// The registry is per draft -- draft-20 changed LOCATION_FILTER's encoding
+	// under an unchanged Type -- so the codec is handed the draft's Version.
 	"moq_params": {
-		appendTmpl: tmpl("moq_params_append", `	buf, err = m.{{ .Field }}.appendNum(buf)
+		appendTmpl: tmpl("moq_params_append", `	buf, err = m.{{ .Field }}.appendNum(buf, {{ .Version }})
 	if err != nil {
 		return nil, err
 	}
 `),
-		parseTmpl: tmpl("moq_params_parse", `	n, err = m.{{ .Field }}.parseNum(data)
+		parseTmpl: tmpl("moq_params_parse", `	n, err = m.{{ .Field }}.parseNum(data, {{ .Version }})
 	if err != nil {
 		return err
 	}
@@ -239,25 +242,29 @@ var codecs = map[string]codec{
 }
 
 type generator struct {
-	pkg          string
-	methodSuffix string
-	args         string
+	pkg   string
+	draft int
+	args  string
 
 	imports map[string]struct{}
 	body    bytes.Buffer
 }
 
-// generate emits the append/parse pair for msg. methodSuffix distinguishes the
-// draft a declaration set belongs to, so several sets can live in one package.
-func generate(msg messageDecl, pkg, methodSuffix, args string) ([]byte, error) {
+// generate emits the append/parse pair for msg in draft. The methods are
+// suffixed with the draft (appendV18, parseV22), so several drafts' codecs
+// live side by side on one struct.
+func generate(msg messageDecl, pkg string, draft int, args string) ([]byte, error) {
 	if pkg == "" {
 		return nil, errInvalidPackage
 	}
+	if !msg.inDraft(draft) {
+		return nil, fmt.Errorf("%s does not exist in draft %d", msg.name, draft)
+	}
 	g := &generator{
-		pkg:          pkg,
-		methodSuffix: methodSuffix,
-		args:         args,
-		imports:      map[string]struct{}{},
+		pkg:     pkg,
+		draft:   draft,
+		args:    args,
+		imports: map[string]struct{}{},
 	}
 	if err := g.generateAppend(msg); err != nil {
 		return nil, err
@@ -268,10 +275,18 @@ func generate(msg messageDecl, pkg, methodSuffix, args string) ([]byte, error) {
 	return g.format()
 }
 
-func (g *generator) generateAppend(msg messageDecl) error {
-	fields := msg.protoFields()
+// methodSuffix names the draft a codec belongs to: V18 for draft 18.
+func (g *generator) methodSuffix() string {
+	return fmt.Sprintf("V%d", g.draft)
+}
 
-	// Every appendV18 returns an error so that all messages satisfy one
+func (g *generator) generateAppend(msg messageDecl) error {
+	fields, err := msg.wireFields(g.draft)
+	if err != nil {
+		return err
+	}
+
+	// Every append method returns an error so that all messages satisfy one
 	// interface, but only messages with a fallible field need the variable.
 	fallible := false
 	for _, f := range fields {
@@ -284,7 +299,7 @@ func (g *generator) generateAppend(msg messageDecl) error {
 		}
 	}
 
-	g.printf("func (m *%s) append%s(buf []byte) ([]byte, error) {\n", msg.name, g.methodSuffix)
+	g.printf("func (m *%s) append%s(buf []byte) ([]byte, error) {\n", msg.name, g.methodSuffix())
 	if fallible {
 		g.printf("\tvar err error\n\n")
 	}
@@ -293,7 +308,7 @@ func (g *generator) generateAppend(msg messageDecl) error {
 		if err != nil {
 			return err
 		}
-		if err := c.appendTmpl.Execute(&g.body, templateData(f)); err != nil {
+		if err := c.appendTmpl.Execute(&g.body, g.templateData(f)); err != nil {
 			return err
 		}
 	}
@@ -302,9 +317,12 @@ func (g *generator) generateAppend(msg messageDecl) error {
 }
 
 func (g *generator) generateParse(msg messageDecl) error {
-	fields := msg.protoFields()
+	fields, err := msg.wireFields(g.draft)
+	if err != nil {
+		return err
+	}
 
-	g.printf("func (m *%s) parse%s(data []byte) error {\n", msg.name, g.methodSuffix)
+	g.printf("func (m *%s) parse%s(data []byte) error {\n", msg.name, g.methodSuffix())
 	// A message with no wire fields parses nothing, so the scratch variables
 	// would be unused.
 	if len(fields) > 0 {
@@ -315,7 +333,7 @@ func (g *generator) generateParse(msg messageDecl) error {
 		if err != nil {
 			return err
 		}
-		if err := c.parseTmpl.Execute(&g.body, templateData(f)); err != nil {
+		if err := c.parseTmpl.Execute(&g.body, g.templateData(f)); err != nil {
 			return err
 		}
 		g.printf("\n")
@@ -342,18 +360,20 @@ func (g *generator) codecFor(f fieldDecl) (codec, error) {
 }
 
 // templateData exposes the field name, a lowerCamel variant safe to use as a
-// local variable name in the generated parser, and the optional `max` tag.
+// local variable name in the generated parser, the optional `max` tag, and
+// the name of the draft's Version constant for codecs that need it.
 //
 // `max` carries a draft-18 upper bound that the receiver MUST enforce by
 // closing the session: a byte length for tlv_bytes and tlv_string (Reason
 // Phrase is 1024, New Session URI 8192), an element count for ntlv_bytes (a
 // Track Namespace holds at most 32 fields). Without the tag no bound is
 // generated beyond what the message body itself implies.
-func templateData(f fieldDecl) map[string]string {
+func (g *generator) templateData(f fieldDecl) map[string]string {
 	return map[string]string{
-		"Field": f.name,
-		"Var":   strings.ToLower(f.name[:1]) + f.name[1:],
-		"Max":   f.tag.Get("max"),
+		"Field":   f.name,
+		"Var":     strings.ToLower(f.name[:1]) + f.name[1:],
+		"Max":     f.tag.Get("max"),
+		"Version": fmt.Sprintf("Version%d", g.draft),
 	}
 }
 

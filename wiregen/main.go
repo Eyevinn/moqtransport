@@ -38,10 +38,14 @@ func main() {
 	}
 
 	args := strings.Join(os.Args[1:], " ")
-	suffix := fmt.Sprintf("V%d", *draft)
 
 	for _, msg := range msgs {
-		src, err := generate(msg, pkg, suffix, args)
+		// One declaration file serves every draft; a message that does not
+		// exist in this one gets no codec for it.
+		if !msg.inDraft(*draft) {
+			continue
+		}
+		src, err := generate(msg, pkg, *draft, args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "generating %s: %v\n", msg.name, err)
 			os.Exit(1)

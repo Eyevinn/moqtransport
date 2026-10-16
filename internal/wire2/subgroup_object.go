@@ -30,13 +30,15 @@ type SubgroupReader struct {
 	Header *SubgroupHeader
 
 	r            byteReader
+	version      Version
 	prevObjectID uint64
 	haveObject   bool
 }
 
-// NewSubgroupReader returns a reader for the Objects that follow h on r.
-func NewSubgroupReader(h *SubgroupHeader, r byteReader) *SubgroupReader {
-	return &SubgroupReader{Header: h, r: r}
+// NewSubgroupReader returns a reader for the Objects that follow h on r, on a
+// session speaking version.
+func NewSubgroupReader(h *SubgroupHeader, r byteReader, version Version) *SubgroupReader {
+	return &SubgroupReader{Header: h, r: r, version: version}
 }
 
 // Next reads the next Object. It returns io.EOF, and only io.EOF, when the
@@ -61,7 +63,7 @@ func (s *SubgroupReader) Next() (*SubgroupObject, error) {
 	}
 
 	if s.Header.HasProperties {
-		if obj.Properties, err = readProperties(s.r); err != nil {
+		if obj.Properties, err = readProperties(s.r, s.version); err != nil {
 			return nil, err
 		}
 	}

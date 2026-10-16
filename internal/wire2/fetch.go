@@ -6,8 +6,9 @@ import (
 	"github.com/Eyevinn/locmaf/vi64"
 )
 
-// FetchType selects which optional structure a FETCH message body carries
-// (draft-ietf-moq-transport-18, Section 10.12).
+// FetchType selects which optional structure a draft-18 FETCH message body
+// carries (draft-ietf-moq-transport-18, Section 10.12). Draft-22 has no such
+// field; every draft-22 FETCH is standalone.
 type FetchType uint64
 
 const (
@@ -29,7 +30,9 @@ func (t FetchType) String() string {
 }
 
 // AppendFetchHeader writes the stream type and Request ID that together open a
-// FETCH response stream (Section 11.4.4).
+// FETCH response stream (Section 11.4.4). In draft-22 the same header opens a
+// fill fetch stream, carrying the Request ID of the SUBSCRIBE or
+// REQUEST_UPDATE that asked for the fill.
 //
 // It is not a control message: a data stream header carries no Message Length,
 // so it cannot go through AppendControlMessage even though its codepoint sits
@@ -49,36 +52,47 @@ func ParseFetchHeader(r io.ByteReader) (uint64, error) {
 	return requestID, nil
 }
 
-// StandaloneFetch names a track and an explicit range, and is present when
-// FetchType is FetchTypeStandalone.
-type StandaloneFetch struct {
-	TrackNamespace [][]byte
-	TrackName      []byte
-	StartLocation  Location
-	// EndLocation is the last Object plus one; an Object of 0 means the whole
-	// group is requested.
-	EndLocation Location
-}
-
 // JoiningFetch references a subscription on the same session, and is present
 // when FetchType is FetchTypeRelativeJoining or FetchTypeAbsoluteJoining. The
 // publisher derives the range from that subscription, so the fetched and
-// subscribed Objects are contiguous and do not overlap.
+// subscribed Objects are contiguous and do not overlap. Draft-18 only:
+// draft-20 replaced joining with fill fetch streams.
 type JoiningFetch struct {
 	JoiningRequestID uint64
 	JoiningStart     uint64
 }
 
-// Fetch is the FETCH message (Section 10.12).
+// Fetch is the FETCH message (draft-18 Section 10.12, draft-22 Section 9.11).
 //
-// Its codec is hand-written rather than generated: which of the two optional
-// structures appears is decided by FetchType, a sibling field, and wiregen
-// codecs see one field at a time. Do not add Fetch to wiregen's message list.
+// The two drafts' bodies differ. Draft-18 has a Fetch Type selecting either a
+// standalone body -- track name and explicit Start and End Locations -- or a
+// joining one naming a subscription. Draft-22 has no Fetch Type and no range
+// fields: every FETCH is standalone, and its range is the LOCATION_FILTER
+// parameter. The struct is the union; each codec writes its own part, and the
+// draft-22 codec reports FetchTypeStandalone on parse so callers can switch on
+// FetchType regardless of draft.
+//
+// Its codecs are hand-written rather than generated: the draft-18 body is
+// conditional on a sibling field, and wiregen codecs see one field at a time.
+// Do not add Fetch to wiregen's message list.
 type Fetch struct {
-	RequestID  uint64
-	FetchType  FetchType
-	Standalone *StandaloneFetch
-	Joining    *JoiningFetch
+	RequestID uint64
+	FetchType FetchType
+
+	// TrackNamespace and TrackName name the track of a standalone FETCH.
+	TrackNamespace [][]byte
+	TrackName      []byte
+
+	// StartLocation and EndLocation are draft-18's explicit range. EndLocation
+	// is the last Object plus one; an Object of 0 means the whole Group.
+	// Draft-22 carries the range in LOCATION_FILTER instead, and ignores
+	// these.
+	StartLocation Location
+	EndLocation   Location
+
+	// Joining is present for draft-18's two joining types.
+	Joining *JoiningFetch
+
 	Parameters Parameters
 }
 
@@ -87,23 +101,21 @@ func (m *Fetch) Type() ControlMessageType { return ControlMessageTypeFetch }
 func (m *Fetch) appendV18(buf []byte) ([]byte, error) {
 	buf = vi64.Append(buf, m.RequestID)
 	buf = vi64.Append(buf, uint64(m.FetchType))
-	if m.FetchType == FetchTypeStandalone && m.Standalone != nil {
-		s := m.Standalone
-		buf = vi64.Append(buf, uint64(len(s.TrackNamespace)))
-		for _, f := range s.TrackNamespace {
-			buf = vi64.Append(buf, uint64(len(f)))
-			buf = append(buf, f...)
+	switch m.FetchType {
+	case FetchTypeStandalone:
+		buf = appendTrackName(buf, m.TrackNamespace, m.TrackName)
+		buf = m.StartLocation.append(buf)
+		buf = m.EndLocation.append(buf)
+	case FetchTypeRelativeJoining, FetchTypeAbsoluteJoining:
+		if m.Joining == nil {
+			return nil, errJoiningFetchWithoutSubscription
 		}
-		buf = vi64.Append(buf, uint64(len(s.TrackName)))
-		buf = append(buf, s.TrackName...)
-		buf = s.StartLocation.append(buf)
-		buf = s.EndLocation.append(buf)
-	}
-	if m.FetchType != FetchTypeStandalone && m.Joining != nil {
 		buf = vi64.Append(buf, m.Joining.JoiningRequestID)
 		buf = vi64.Append(buf, m.Joining.JoiningStart)
+	default:
+		return nil, errInvalidFetchType
 	}
-	return m.Parameters.appendNum(buf)
+	return m.Parameters.appendNum(buf, Version18)
 }
 
 func (m *Fetch) parseV18(data []byte) error {
@@ -122,7 +134,17 @@ func (m *Fetch) parseV18(data []byte) error {
 
 	switch m.FetchType {
 	case FetchTypeStandalone:
-		n, err := m.parseStandalone(data[parsed:])
+		n, err := m.parseTrackName(data[parsed:])
+		parsed += n
+		if err != nil {
+			return err
+		}
+		n, err = m.StartLocation.parse(data[parsed:])
+		parsed += n
+		if err != nil {
+			return err
+		}
+		n, err = m.EndLocation.parse(data[parsed:])
 		parsed += n
 		if err != nil {
 			return err
@@ -137,7 +159,7 @@ func (m *Fetch) parseV18(data []byte) error {
 		return errInvalidFetchType
 	}
 
-	n, err = m.Parameters.parseNum(data[parsed:])
+	n, err = m.Parameters.parseNum(data[parsed:], Version18)
 	parsed += n
 	if err != nil {
 		return err
@@ -148,9 +170,53 @@ func (m *Fetch) parseV18(data []byte) error {
 	return nil
 }
 
-func (m *Fetch) parseStandalone(data []byte) (int, error) {
-	var s StandaloneFetch
+// appendV22 writes draft-22's body: Request ID, track name, Parameters. A
+// joining FETCH has no draft-22 form.
+func (m *Fetch) appendV22(buf []byte) ([]byte, error) {
+	if m.FetchType != FetchTypeStandalone && m.FetchType != 0 {
+		return nil, errJoiningFetchNotInDraft
+	}
+	buf = vi64.Append(buf, m.RequestID)
+	buf = appendTrackName(buf, m.TrackNamespace, m.TrackName)
+	return m.Parameters.appendNum(buf, Version22)
+}
 
+func (m *Fetch) parseV22(data []byte) error {
+	requestID, parsed, err := vi64.Parse(data)
+	if err != nil {
+		return err
+	}
+	m.RequestID = requestID
+	m.FetchType = FetchTypeStandalone
+
+	n, err := m.parseTrackName(data[parsed:])
+	parsed += n
+	if err != nil {
+		return err
+	}
+	n, err = m.Parameters.parseNum(data[parsed:], Version22)
+	parsed += n
+	if err != nil {
+		return err
+	}
+	if parsed != len(data) {
+		return errTrailingBytes
+	}
+	return nil
+}
+
+func appendTrackName(buf []byte, namespace [][]byte, name []byte) []byte {
+	buf = vi64.Append(buf, uint64(len(namespace)))
+	for _, f := range namespace {
+		buf = vi64.Append(buf, uint64(len(f)))
+		buf = append(buf, f...)
+	}
+	buf = vi64.Append(buf, uint64(len(name)))
+	return append(buf, name...)
+}
+
+// parseTrackName reads a Track Namespace and a Track Name.
+func (m *Fetch) parseTrackName(data []byte) (int, error) {
 	count, parsed, err := vi64.Parse(data)
 	if err != nil {
 		return parsed, err
@@ -161,14 +227,14 @@ func (m *Fetch) parseStandalone(data []byte) (int, error) {
 	if count > uint64(len(data)-parsed) {
 		return parsed, io.ErrUnexpectedEOF
 	}
-	s.TrackNamespace = make([][]byte, 0, count)
+	m.TrackNamespace = make([][]byte, 0, count)
 	for range count {
 		field, n, err := parseByteString(data[parsed:], 0)
 		parsed += n
 		if err != nil {
 			return parsed, err
 		}
-		s.TrackNamespace = append(s.TrackNamespace, field)
+		m.TrackNamespace = append(m.TrackNamespace, field)
 	}
 
 	name, n, err := parseByteString(data[parsed:], 0)
@@ -176,20 +242,7 @@ func (m *Fetch) parseStandalone(data []byte) (int, error) {
 	if err != nil {
 		return parsed, err
 	}
-	s.TrackName = name
-
-	n, err = s.StartLocation.parse(data[parsed:])
-	parsed += n
-	if err != nil {
-		return parsed, err
-	}
-	n, err = s.EndLocation.parse(data[parsed:])
-	parsed += n
-	if err != nil {
-		return parsed, err
-	}
-
-	m.Standalone = &s
+	m.TrackName = name
 	return parsed, nil
 }
 
