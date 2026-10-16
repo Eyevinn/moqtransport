@@ -105,6 +105,11 @@ type requestStream struct {
 	// chosen by it.
 	version wire2.Version
 
+	// peerIDs validates the Request ID of each REQUEST_UPDATE the peer sends
+	// on a stream it opened. Nil skips the check, which is what a stream we
+	// opened gets: the peer has no REQUEST_UPDATE to send on it.
+	peerIDs *peerRequestIDs
+
 	ctx       context.Context
 	cancelCtx context.CancelCauseFunc
 
@@ -281,6 +286,11 @@ func (r *requestStream) readAll(handle func(wire2.ControlMessage) error) error {
 				return nil
 			}
 			return err
+		}
+		if update, ok := msg.(*wire2.RequestUpdate); ok && r.peerIDs != nil {
+			if err := r.peerIDs.use(update.RequestID); err != nil {
+				return err
+			}
 		}
 		if err := handle(msg); err != nil {
 			return err

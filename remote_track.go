@@ -20,6 +20,11 @@ type subscriberSession interface {
 
 	// unregisterTrackAlias drops that registration when the subscription ends.
 	unregisterTrackAlias(alias uint64, t *RemoteTrack)
+
+	// nextRequestID allocates a Request ID. A REQUEST_UPDATE consumes one of
+	// its own (draft-18 Section 10.1, draft-22 Section 6.4.2.1); it does not
+	// reuse the ID of the request it updates.
+	nextRequestID() uint64
 }
 
 // PublishDone is the publisher's report that a subscription has ended
@@ -252,7 +257,7 @@ func (t *RemoteTrack) subgroupStreamEnded(ctx context.Context, header *wire2.Sub
 // remove one.
 func (t *RemoteTrack) Update(opts ...SubscribeUpdateOption) error {
 	update := &wire2.RequestUpdate{
-		RequestID:  t.requestID,
+		RequestID:  t.session.nextRequestID(),
 		Parameters: wire2.Parameters{},
 	}
 	for _, opt := range opts {
