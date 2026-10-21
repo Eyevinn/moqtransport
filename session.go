@@ -636,7 +636,12 @@ func (s *Session) handleBidiStream(stream Stream) {
 	rs := newRequestStream(s.ctx, stream, s.qlog, s.version)
 	msg, err := rs.readRequest()
 	if err != nil {
-		if errors.Is(err, io.EOF) {
+		// A malformed request, or one that may not open a stream, ends the
+		// session. A stream the peer finished or reset before its request
+		// arrived is a request cancelled before it was made, which Section
+		// 3.3.2 lets either side do at any time.
+		var protocolErr ProtocolError
+		if !errors.As(err, &protocolErr) {
 			rs.cancel(StreamErrorCancelled, err)
 			return
 		}

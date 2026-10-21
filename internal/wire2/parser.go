@@ -3,6 +3,7 @@ package wire2
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 
 	"github.com/Eyevinn/locmaf/vi64"
@@ -42,12 +43,17 @@ func (p *ControlMessageParser) Reader() io.ByteReader {
 // when the stream ends cleanly between messages; a stream that ends part-way
 // through one gives io.ErrUnexpectedEOF.
 //
-// Every other error is a MUST-close condition: an unknown message type, a body
-// that does not decode, or a body whose length disagrees with the Message
-// Length field, all of which draft-18 makes a PROTOCOL_VIOLATION.
+// A message that cannot be parsed -- an unknown type, a body that does not
+// decode, a body whose length disagrees with the Message Length field, or a
+// stream that ends part-way through one -- comes back as a *MalformedError:
+// both drafts make each of those a PROTOCOL_VIOLATION. Any other error is the
+// stream failing underneath, a reset say, and is returned as it is.
 func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 	messageType, err := vi64.Read(p.reader)
 	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, &MalformedError{Err: err}
+		}
 		return nil, err
 	}
 	return p.ParseBody(ControlMessageType(messageType))
@@ -64,7 +70,7 @@ func (p *ControlMessageParser) Parse() (ControlMessage, error) {
 func (p *ControlMessageParser) ParseBody(messageType ControlMessageType) (ControlMessage, error) {
 	var lengthBytes [2]byte
 	if _, err := io.ReadFull(p.reader, lengthBytes[:]); err != nil {
-		return nil, unexpectedEOF(err)
+		return nil, truncated(err)
 	}
 	length := binary.BigEndian.Uint16(lengthBytes[:])
 
@@ -74,17 +80,27 @@ func (p *ControlMessageParser) ParseBody(messageType ControlMessageType) (Contro
 	// errTrailingBytes. Both are the length check draft-18 requires.
 	body := make([]byte, length)
 	if _, err := io.ReadFull(p.reader, body); err != nil {
-		return nil, unexpectedEOF(err)
+		return nil, truncated(err)
 	}
 
 	msg, err := newControlMessage(p.scope, messageType, p.version)
 	if err != nil {
-		return nil, err
+		return nil, &MalformedError{Err: err}
 	}
 	if err := parseBody(msg, body, p.version); err != nil {
-		return nil, err
+		return nil, &MalformedError{Err: err}
 	}
 	return msg, nil
+}
+
+// truncated classifies a failed read inside a message: the stream ending
+// there is a malformed message, anything else the stream failing.
+func truncated(err error) error {
+	err = unexpectedEOF(err)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return &MalformedError{Err: err}
+	}
+	return err
 }
 
 // unexpectedEOF maps a clean end of stream inside a message to

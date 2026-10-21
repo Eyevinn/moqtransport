@@ -3,6 +3,7 @@ package wire2
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"testing"
 
@@ -303,3 +304,37 @@ func TestOpensRequestStream(t *testing.T) {
 		assert.False(t, mt.OpensRequestStream(), "%v should not open a request stream", mt)
 	}
 }
+
+// The parser tells a malformed message, which ends the session, from the
+// stream failing underneath it, which ends only the request.
+func TestParseErrorsSayWhoseFaultTheyAre(t *testing.T) {
+	full, err := AppendControlMessage(nil, &GoAwayReq{NewSessionURI: "moqt://x/", Timeout: 1}, Version22)
+	require.NoError(t, err)
+
+	var malformed *MalformedError
+	_, err = NewControlMessageParser(bytes.NewReader([]byte{0x60, 0x00, 0x00}), ScopeRequest, Version22).Parse()
+	assert.ErrorAs(t, err, &unknownControlMessageTypeError{}, "type 0x60 is no message in either draft")
+	for _, data := range [][]byte{
+		full[:1],                       // the length cut off
+		full[:len(full)-1],             // the body cut off
+		{0x40, 0x60, 0x00, 0x00},       // a Message Length running past the stream
+		append(full[:2:2], 0x01, 0x00), // a body that does not decode
+		{0x80},                         // the type varint cut off
+		{0x60, 0x00, 0x00},             // an unknown type
+	} {
+		_, err := NewControlMessageParser(bytes.NewReader(data), ScopeRequest, Version22).Parse()
+		assert.ErrorAs(t, err, &malformed, "%x", data)
+	}
+
+	reset := errors.New("stream reset")
+	_, err = NewControlMessageParser(io.MultiReader(bytes.NewReader(full[:3]), errReader{reset}), ScopeRequest, Version22).Parse()
+	assert.ErrorIs(t, err, reset)
+	assert.False(t, errors.As(err, &malformed), "a reset is not the peer's message being malformed")
+
+	_, err = NewControlMessageParser(bytes.NewReader(nil), ScopeRequest, Version22).Parse()
+	assert.Equal(t, io.EOF, err, "a clean end between messages is neither")
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
