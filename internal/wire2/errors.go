@@ -220,6 +220,20 @@ func (e unknownStreamTypeError) Error() string {
 	return fmt.Sprintf("unknown stream type %#x", uint64(e.streamType))
 }
 
+// MalformedError is a control message that could not be parsed: an unknown
+// type, a body that does not decode, a body whose length disagrees with its
+// Message Length, or a stream that ended part-way through one. Both drafts
+// make each of these a PROTOCOL_VIOLATION, so it ends the session -- unlike
+// the stream itself failing, a reset say, which the parser returns unwrapped
+// and which ends only the request the stream carries.
+type MalformedError struct {
+	Err error
+}
+
+func (e *MalformedError) Error() string { return "malformed control message: " + e.Err.Error() }
+
+func (e *MalformedError) Unwrap() error { return e.Err }
+
 // messageNotInDraftError means a message was sent on a session whose draft
 // does not define it.
 type messageNotInDraftError struct {

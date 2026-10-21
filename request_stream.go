@@ -232,6 +232,10 @@ func (r *requestStream) cancel(code StreamErrorCode, cause error) {
 func (r *requestStream) readMessage() (wire2.ControlMessage, error) {
 	msg, err := r.parser.Parse()
 	if err != nil {
+		var malformed *wire2.MalformedError
+		if errors.As(err, &malformed) {
+			return nil, ProtocolError{code: SessionErrorProtocolViolation, message: err.Error()}
+		}
 		return nil, err
 	}
 	r.qlog.logControlMessage(moqt.ControlMessageEventParsed, r.stream, msg)
