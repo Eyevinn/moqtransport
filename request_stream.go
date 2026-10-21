@@ -110,6 +110,10 @@ type requestStream struct {
 	// opened gets: the peer has no REQUEST_UPDATE to send on it.
 	peerIDs *peerRequestIDs
 
+	// scope checks every message's parameters against what the draft allows
+	// where it sits in the exchange, in both directions.
+	scope parameterScope
+
 	ctx       context.Context
 	cancelCtx context.CancelCauseFunc
 
@@ -164,6 +168,11 @@ func (r *requestStream) write(msg wire2.ControlMessage) error {
 	defer r.mu.Unlock()
 	if r.sendDone {
 		return errRequestStreamSendClosed
+	}
+	// Checked under the lock, so the scope sees messages in the order the
+	// stream carries them.
+	if err := r.scope.check(r.version, msg, true); err != nil {
+		return errParameterNotAllowed(msg, err)
 	}
 	if _, err := r.stream.Write(buf); err != nil {
 		return err
@@ -239,6 +248,9 @@ func (r *requestStream) readMessage() (wire2.ControlMessage, error) {
 		return nil, err
 	}
 	r.qlog.logControlMessage(moqt.ControlMessageEventParsed, r.stream, msg)
+	if err := r.scope.check(r.version, msg, false); err != nil {
+		return nil, parameterViolation(err)
+	}
 	return msg, nil
 }
 

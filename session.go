@@ -332,6 +332,9 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 	if hasFill && !s.version.AtLeast(wire2.Version22) {
 		return nil, fmt.Errorf("%w: fill", ErrNotInThisDraft)
 	}
+	if err := checkRequest(s.version, msg); err != nil {
+		return nil, err
+	}
 
 	stream, err := s.conn.OpenStreamSync(ctx)
 	if err != nil {
