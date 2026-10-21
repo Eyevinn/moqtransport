@@ -52,6 +52,7 @@ type PublishNamespaceRequest struct {
 }
 
 func newPublishNamespaceRequest(rs *requestStream, msg *wire2.PublishNamespace) *PublishNamespaceRequest {
+	rs.scope.opened(msg.Type(), false)
 	return &PublishNamespaceRequest{
 		requestStream: rs,
 		requestID:     msg.RequestID,
@@ -238,6 +239,7 @@ type SubscribeNamespaceRequest struct {
 }
 
 func newSubscribeNamespaceRequest(rs *requestStream, msg *wire2.SubscribeNamespace) *SubscribeNamespaceRequest {
+	rs.scope.opened(msg.Type(), false)
 	return &SubscribeNamespaceRequest{
 		requestStream: rs,
 		requestID:     msg.RequestID,

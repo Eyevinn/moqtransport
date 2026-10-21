@@ -752,6 +752,9 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 	if !present {
 		order = GroupOrderAscending
 	}
+	if err := checkRequest(s.version, msg); err != nil {
+		return nil, err
+	}
 
 	stream, err := s.conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -794,6 +797,7 @@ func (s *Session) fetch(ctx context.Context, msg *wire2.Fetch, opts ...FetchOpti
 // the subscription it names. A range that cannot be resolved, or that uses
 // Range Filters, comes back as the REQUEST_ERROR code the draft prescribes.
 func newFetchRequest(rs *requestStream, session fetchSession, msg *wire2.Fetch) (*FetchRequest, error) {
+	rs.scope.opened(msg.Type(), false)
 	order, present, err := msg.Parameters.GroupOrder()
 	if err != nil {
 		return nil, err

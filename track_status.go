@@ -52,6 +52,7 @@ type TrackStatusRequest struct {
 }
 
 func newTrackStatusRequest(rs *requestStream, msg *wire2.TrackStatus) *TrackStatusRequest {
+	rs.scope.opened(msg.Type(), false)
 	return &TrackStatusRequest{
 		requestStream: rs,
 		requestID:     msg.RequestID,

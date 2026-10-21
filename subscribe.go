@@ -88,6 +88,7 @@ type earlyFill struct {
 }
 
 func newSubscribeRequest(rs *requestStream, session publisherSession, msg *wire2.Subscribe) *SubscribeRequest {
+	rs.scope.opened(msg.Type(), false)
 	namespace := make([]string, len(msg.TrackNamespace))
 	for i, field := range msg.TrackNamespace {
 		namespace[i] = string(field)
