@@ -46,6 +46,42 @@ func TestSessionHandshake(t *testing.T) {
 	})
 }
 
+// A peer that closes the connection instead of answering SETUP, as a relay
+// does when it refuses the path, ends the handshake at once and with the
+// peer's reason, not when the caller's context runs out.
+func TestSessionHandshakeEndsWhenConnectionCloses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		clientConn, serverConn := newMemConnPair(wire2.Version18.ALPN())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			_ = serverConn.CloseWithError(0x10, "unauthorized")
+		}()
+		start := time.Now()
+		err := (&Session{}).Run(ctx, clientConn)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorContains(t, err, "unauthorized")
+		assert.Less(t, time.Since(start), time.Second)
+	})
+}
+
+// An established session ends when the peer closes the connection under it.
+func TestSessionEndsWhenConnectionCloses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &Session{Implementation: "test/client"}
+		server := &Session{Implementation: "test/server"}
+		runSessions(t, client, server)
+
+		_ = server.conn.CloseWithError(0, "going away")
+		synctest.Wait()
+		require.Error(t, client.Context().Err())
+		assert.ErrorContains(t, context.Cause(client.Context()), "going away")
+	})
+}
+
 // A peer that negotiated something this build does not speak cannot be
 // recovered from: from draft-17 there is no version field to fall back on.
 func TestSessionRejectsUnknownALPN(t *testing.T) {

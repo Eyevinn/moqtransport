@@ -243,6 +243,22 @@ func (s *Session) fail(err error) {
 	_ = s.closeWithError(SessionErrorProtocolViolation, err.Error())
 }
 
+// connectionLost ends the session after its connection went away underneath
+// it: the peer closed it, or it timed out. There is nothing left to send on, so
+// unlike fail it only records why. A handshake still waiting for the peer's
+// SETUP is released with the same error rather than left to wait out its
+// context.
+func (s *Session) connectionLost(err error) {
+	if s.ctx.Err() != nil {
+		// The session ended first and closed the connection itself, which is
+		// what made the accept fail. Its own cause stands.
+		return
+	}
+	cause := fmt.Errorf("connection closed: %w", err)
+	s.control.failRemote(cause)
+	s.cancel(cause)
+}
+
 // setupMessage builds our SETUP. There is no version field: draft-17 removed
 // it, and the version came from the ALPN before a byte of MOQT was written.
 func (s *Session) setupMessage() (*wire2.Setup, error) {
@@ -427,6 +443,7 @@ func (s *Session) acceptUniStreams() {
 	for {
 		stream, err := s.conn.AcceptUniStream(s.ctx)
 		if err != nil {
+			s.connectionLost(err)
 			return
 		}
 		// Each stream is classified on its own goroutine, because reading its
@@ -549,6 +566,7 @@ func (s *Session) acceptBidiStreams() {
 	for {
 		stream, err := s.conn.AcceptStream(s.ctx)
 		if err != nil {
+			s.connectionLost(err)
 			return
 		}
 		held, err := s.pendingBidi.hold(stream)
