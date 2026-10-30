@@ -103,6 +103,16 @@ func truncated(err error) error {
 	return err
 }
 
+// headerTruncated classifies a failed read inside a data stream header the
+// way truncated does a control message.
+func headerTruncated(err error) error {
+	err = unexpectedEOF(err)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return &MalformedHeaderError{Err: err}
+	}
+	return err
+}
+
 // unexpectedEOF maps a clean end of stream inside a message to
 // io.ErrUnexpectedEOF, keeping io.EOF meaning "cleanly between messages".
 func unexpectedEOF(err error) error {
@@ -233,12 +243,22 @@ func ClassifyStreamType(t StreamType) (UniStreamKind, error) {
 // ReadStreamType reads and classifies the leading varint of a unidirectional
 // stream. The stream type is returned as well, since a SUBGROUP_HEADER's type
 // is itself the header's bitfield and the header parser needs it.
+//
+// A stream that ends before its first byte gives io.EOF. An unknown type, or
+// a stream that ends inside the varint, is a *MalformedHeaderError; any other
+// error is the stream failing and is returned as it is.
 func ReadStreamType(r io.ByteReader) (StreamType, UniStreamKind, error) {
 	v, err := vi64.Read(r)
 	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return 0, 0, &MalformedHeaderError{Err: err}
+		}
 		return 0, 0, err
 	}
 	t := StreamType(v)
 	kind, err := ClassifyStreamType(t)
-	return t, kind, err
+	if err != nil {
+		return t, kind, &MalformedHeaderError{Err: err}
+	}
+	return t, kind, nil
 }

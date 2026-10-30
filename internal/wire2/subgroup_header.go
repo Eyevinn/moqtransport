@@ -133,16 +133,17 @@ func AppendSubgroupHeader(buf []byte, h *SubgroupHeader) ([]byte, error) {
 // ParseSubgroupHeader reads the header fields that follow stream type t, which
 // the caller has already read and classified with ReadStreamType.
 //
-// A stream that ends part-way through the header gives io.ErrUnexpectedEOF:
-// Section 11.4 makes a FIN in the middle of a serialized Object a
-// PROTOCOL_VIOLATION, and the header is no different.
+// A stream that ends part-way through the header gives a *MalformedHeaderError
+// wrapping io.ErrUnexpectedEOF: Section 11.4 makes a FIN in the middle of a
+// serialized Object a PROTOCOL_VIOLATION, and the header is no different. A
+// stream reset part-way through gives the reset, unwrapped.
 func ParseSubgroupHeader(t StreamType, r byteReader) (*SubgroupHeader, error) {
 	if !t.IsSubgroupHeader() {
-		return nil, unknownStreamTypeError{streamType: t}
+		return nil, &MalformedHeaderError{Err: unknownStreamTypeError{streamType: t}}
 	}
 	mode := SubgroupIDMode((uint64(t) & subgroupIDModeMask) >> subgroupIDModeShift)
 	if mode == subgroupIDModeReserved {
-		return nil, errReservedSubgroupIDMode
+		return nil, &MalformedHeaderError{Err: errReservedSubgroupIDMode}
 	}
 
 	h := &SubgroupHeader{
@@ -155,20 +156,20 @@ func ParseSubgroupHeader(t StreamType, r byteReader) (*SubgroupHeader, error) {
 
 	var err error
 	if h.TrackAlias, err = vi64.Read(r); err != nil {
-		return nil, unexpectedEOF(err)
+		return nil, headerTruncated(err)
 	}
 	if h.GroupID, err = vi64.Read(r); err != nil {
-		return nil, unexpectedEOF(err)
+		return nil, headerTruncated(err)
 	}
 	if mode == SubgroupIDExplicit {
 		if h.SubgroupID, err = vi64.Read(r); err != nil {
-			return nil, unexpectedEOF(err)
+			return nil, headerTruncated(err)
 		}
 	}
 	if !h.DefaultPriority {
 		priority, err := r.ReadByte()
 		if err != nil {
-			return nil, unexpectedEOF(err)
+			return nil, headerTruncated(err)
 		}
 		h.Priority = priority
 	}

@@ -106,3 +106,70 @@ func TestTruncatedRequestClosesTheSession(t *testing.T) {
 		awaitViolation(t, server, "malformed control message")
 	})
 }
+
+// partialHeaders are data stream headers cut short, each by one byte.
+func partialHeaders(t *testing.T) map[string][]byte {
+	t.Helper()
+	subgroup, err := wire2.AppendSubgroupHeader(nil, &wire2.SubgroupHeader{
+		TrackAlias:     99,
+		GroupID:        1,
+		SubgroupIDMode: wire2.SubgroupIDExplicit,
+		Priority:       128,
+	})
+	require.NoError(t, err)
+	fetch := wire2.AppendFetchHeader(nil, 1000)
+	return map[string][]byte{
+		// 0x80 opens a two-byte varint.
+		"stream type":     {0x80},
+		"subgroup header": subgroup[:len(subgroup)-1],
+		"fetch header":    fetch[:len(fetch)-1],
+	}
+}
+
+// A publisher may reset a data stream before its header has arrived -- a
+// draft-22 publisher refusing a fill opens the stream and resets it straight
+// away -- and that costs only the stream.
+func TestDataStreamResetBeforeItsHeader(t *testing.T) {
+	headers := partialHeaders(t)
+	headers["nothing"] = nil
+	for name, header := range headers {
+		t.Run(name, func(t *testing.T) {
+			forEachVersion(t, func(t *testing.T, version wire2.Version) {
+				client, server := &Session{}, &Session{}
+				runSessionsVersion(t, version, client, server)
+
+				stream, err := client.conn.OpenUniStreamSync(context.Background())
+				require.NoError(t, err)
+				if len(header) > 0 {
+					_, err = stream.Write(header)
+					require.NoError(t, err)
+				}
+				stream.Reset(uint32(StreamErrorCancelled))
+
+				synctest.Wait()
+				assert.NoError(t, server.Context().Err())
+				assert.NoError(t, client.Context().Err())
+			})
+		})
+	}
+}
+
+// A data stream that ends part-way through its header is malformed.
+func TestTruncatedDataStreamHeaderClosesTheSession(t *testing.T) {
+	for name, header := range partialHeaders(t) {
+		t.Run(name, func(t *testing.T) {
+			forEachVersion(t, func(t *testing.T, version wire2.Version) {
+				client, server := &Session{}, &Session{}
+				runSessionsVersion(t, version, client, server)
+
+				stream, err := client.conn.OpenUniStreamSync(context.Background())
+				require.NoError(t, err)
+				_, err = stream.Write(header)
+				require.NoError(t, err)
+				require.NoError(t, stream.Close())
+
+				awaitViolation(t, server, "malformed stream header")
+			})
+		})
+	}
+}
