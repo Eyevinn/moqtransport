@@ -518,3 +518,42 @@ func TestFetchCancel(t *testing.T) {
 		assert.NotErrorIs(t, err, ErrFetchComplete)
 	})
 }
+
+// A publisher that has nothing more to say on the request stream finishes its
+// half after FETCH_OK (draft-22 Section 6.4.2.2). That ends no more than the
+// messages: the Objects come on their own stream, which may open after the
+// FIN has arrived, and it is that stream ending that completes the fetch.
+func TestFetchPublisherFinishesAfterFetchOK(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
+		release := make(chan struct{})
+		server := &Session{
+			FetchHandler: FetchHandlerFunc(func(r *FetchRequest) {
+				response, err := r.Accept(WithFetchEndLocation(Location{Group: 1}))
+				if err != nil {
+					return
+				}
+				_ = r.closeSend()
+				<-release
+				_ = response.WriteObject(Object{GroupID: 1, Priority: 128, Payload: []byte("late")})
+				_ = response.Close()
+			}),
+		}
+		client := &Session{}
+		runSessionsVersion(t, version, client, server)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		fetch, err := client.Fetch(ctx, []string{"ns"}, "track",
+			AbsoluteRange(Location{Group: 1}, Location{Group: 1, Object: MaxObjectID}))
+		require.NoError(t, err)
+
+		// The FIN has arrived and been read before any Object is written.
+		synctest.Wait()
+		close(release)
+
+		records := drainFetch(t, ctx, fetch)
+		require.Len(t, records, 1)
+		assert.Equal(t, []byte("late"), records[0].Payload)
+	})
+}
