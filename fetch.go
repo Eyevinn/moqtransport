@@ -597,7 +597,22 @@ func (f *FetchStream) deliver(ctx context.Context, o *FetchObject) error {
 }
 
 func (f *FetchStream) run() error {
-	err := f.requestStream.run(f.handleMessage)
+	err := f.readAll(f.handleMessage)
+	if err == nil && f.answeredOK() {
+		// The publisher finished its half after FETCH_OK, which says only
+		// that no more messages follow (draft-22 Section 6.4.2.2). The
+		// Objects come on a stream of their own, and it is that stream
+		// ending, or this end cancelling, that ends the fetch.
+		select {
+		case <-f.responseDone:
+		case <-f.ctx.Done():
+		}
+	}
+	cause := err
+	if cause == nil {
+		cause = errPeerFinishedRequest
+	}
+	f.cancelCtx(cause)
 	f.establishOnce.Do(func() {
 		f.mu.Lock()
 		if f.answerErr == nil {
@@ -645,6 +660,13 @@ func (f *FetchStream) handleMessage(msg wire2.ControlMessage) error {
 		return nil
 	}
 	return errUnexpectedMessageOnRequestStream
+}
+
+// answeredOK reports whether FETCH_OK has arrived.
+func (f *FetchStream) answeredOK() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.answered
 }
 
 func (f *FetchStream) awaitEstablished(ctx context.Context) error {
