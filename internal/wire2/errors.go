@@ -234,6 +234,20 @@ func (e *MalformedError) Error() string { return "malformed control message: " +
 
 func (e *MalformedError) Unwrap() error { return e.Err }
 
+// MalformedHeaderError is a data stream header that could not be parsed: an
+// unknown stream type, a reserved field value, or a stream that ended
+// part-way through the header. Like a MalformedError it is a
+// PROTOCOL_VIOLATION. The stream failing underneath, a reset say, is returned
+// unwrapped: a publisher may reset a data stream at any time, a draft-22 fill
+// it cannot serve right after the header, and that costs only the stream.
+type MalformedHeaderError struct {
+	Err error
+}
+
+func (e *MalformedHeaderError) Error() string { return "malformed stream header: " + e.Err.Error() }
+
+func (e *MalformedHeaderError) Unwrap() error { return e.Err }
+
 // messageNotInDraftError means a message was sent on a session whose draft
 // does not define it.
 type messageNotInDraftError struct {

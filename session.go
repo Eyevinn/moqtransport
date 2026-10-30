@@ -515,7 +515,7 @@ func (s *Session) handleUniStream(stream ReceiveStream) {
 			// to complain about.
 			return
 		}
-		s.fail(err)
+		s.headerFailed(stream, err)
 		return
 	}
 
@@ -577,7 +577,7 @@ func (s *Session) adoptControlStream(stream ReceiveStream, reader *bufio.Reader)
 func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reader, streamType wire2.StreamType) {
 	header, err := wire2.ParseSubgroupHeader(streamType, reader)
 	if err != nil {
-		s.fail(err)
+		s.headerFailed(stream, err)
 		return
 	}
 
@@ -811,6 +811,20 @@ func (s *Session) receiveDatagrams() {
 
 // failIfProtocolError closes the session for errors that require it and lets
 // everything else stay local to the request it happened on.
+// headerFailed handles a unidirectional stream whose header could not be
+// read. A malformed header ends the session with a PROTOCOL_VIOLATION. A
+// stream that failed underneath it costs only that stream: a publisher may
+// reset a data stream before its header has arrived, and a draft-22
+// publisher refusing a fill opens the stream and resets it straight away.
+func (s *Session) headerFailed(stream ReceiveStream, err error) {
+	var malformed *wire2.MalformedHeaderError
+	if errors.As(err, &malformed) {
+		s.fail(err)
+		return
+	}
+	stream.Stop(uint32(StreamErrorCancelled))
+}
+
 func (s *Session) failIfProtocolError(err error) {
 	var protocolErr ProtocolError
 	if errors.As(err, &protocolErr) {

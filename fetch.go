@@ -909,7 +909,7 @@ func (e *fetchRangeError) Error() string { return fmt.Sprintf("%v: %v", e.code, 
 func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) {
 	requestID, err := wire2.ParseFetchHeader(reader)
 	if err != nil {
-		s.fail(err)
+		s.headerFailed(stream, err)
 		return
 	}
 	fetch, ok := s.fetchReceiverByRequestID(requestID)

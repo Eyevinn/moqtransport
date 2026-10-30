@@ -43,11 +43,12 @@ func AppendFetchHeader(buf []byte, requestID uint64) []byte {
 }
 
 // ParseFetchHeader reads the Request ID that follows a FETCH_HEADER stream
-// type the caller has already read.
+// type the caller has already read. A stream that ends before the Request ID
+// is complete is a *MalformedHeaderError.
 func ParseFetchHeader(r io.ByteReader) (uint64, error) {
 	requestID, err := vi64.Read(r)
 	if err != nil {
-		return 0, unexpectedEOF(err)
+		return 0, headerTruncated(err)
 	}
 	return requestID, nil
 }
