@@ -403,3 +403,68 @@ func TestSubscriptionsToOneTrackKeepTheirObjects(t *testing.T) {
 		assert.Equal(t, []string{"second"}, readAvailable(t, second))
 	})
 }
+
+// TestSharedAliasStreamWaitsForPendingSubscribe: a publisher may give a
+// second subscription to a track the alias the first one has (draft-22
+// Section 3.1.3). A data stream that overtakes the second SUBSCRIBE_OK then
+// cannot be told apart from one of the first subscription's, so it waits for
+// that answer and goes to both.
+func TestSharedAliasStreamWaitsForPendingSubscribe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reqs := make(chan *SubscribeRequest, 2)
+		server := &Session{SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+			reqs <- r
+		})}
+		client := &Session{}
+		clientConn, serverConn := newMemConnPair(wire2.Version22.ALPN())
+		errs := make(chan error, 2)
+		go func() { errs <- client.Run(t.Context(), clientConn) }()
+		go func() { errs <- server.Run(t.Context(), serverConn) }()
+		require.NoError(t, <-errs)
+		require.NoError(t, <-errs)
+		defer func() {
+			_ = client.Close(SessionErrorNoError, "test over")
+			_ = server.Close(SessionErrorNoError, "test over")
+		}()
+
+		go func() { _, _ = (<-reqs).Accept() }()
+		first, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+		require.NoError(t, err)
+
+		answered := make(chan *RemoteTrack)
+		go func() {
+			second, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+			assert.NoError(t, err)
+			answered <- second
+		}()
+		req := <-reqs
+
+		// The stream goes out under the shared alias before SUBSCRIBE_OK.
+		stream, err := serverConn.OpenUniStream()
+		require.NoError(t, err)
+		sg, err := newSubgroup(stream, &wire2.SubgroupHeader{
+			TrackAlias:     first.TrackAlias(),
+			GroupID:        1,
+			SubgroupIDMode: wire2.SubgroupIDExplicit,
+			Priority:       128,
+		}, qlogger{}, nil)
+		require.NoError(t, err)
+		_, err = sg.WriteObject(0, []byte("shared"))
+		require.NoError(t, err)
+		require.NoError(t, sg.Close())
+		synctest.Wait()
+
+		// Answer as a publisher that shares one alias per track.
+		server.mu.Lock()
+		server.nextTrackAlias = first.TrackAlias()
+		server.mu.Unlock()
+		_, err = req.Accept()
+		require.NoError(t, err)
+		second := <-answered
+		require.Equal(t, first.TrackAlias(), second.TrackAlias())
+
+		synctest.Wait()
+		assert.Equal(t, []string{"shared"}, readAvailable(t, first))
+		assert.Equal(t, []string{"shared"}, readAvailable(t, second))
+	})
+}

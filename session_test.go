@@ -447,6 +447,60 @@ func TestRemoteTrackIndexDuplicateAlias(t *testing.T) {
 	assert.False(t, ok, "an emptied alias is forgotten")
 }
 
+// While a SUBSCRIBE to a track is unanswered, a data stream under an alias an
+// established subscription to that track uses may be meant for the new one
+// too (draft-22 Section 3.1.3), so the stream waits for the answer.
+func TestRemoteTrackIndexAwaitsPendingSubscribe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		index := newRemoteTrackIndex()
+		first := &RemoteTrack{namespace: []string{"ns"}, track: "a"}
+		second := &RemoteTrack{namespace: []string{"ns"}, track: "a"}
+		third := &RemoteTrack{namespace: []string{"ns"}, track: "a"}
+		other := &RemoteTrack{namespace: []string{"ns"}, track: "b"}
+		require.NoError(t, index.add(1, first))
+
+		index.expect(other)
+		tracks, ok := index.lookup(1)
+		require.True(t, ok)
+		awaited, ok := index.await(t.Context(), 1)
+		require.True(t, ok)
+		assert.Equal(t, tracks, awaited, "a SUBSCRIBE to another track holds nothing up")
+
+		// The answer shares the alias: the stream reaches both.
+		index.expect(second)
+		found := make(chan []*RemoteTrack, 1)
+		go func() {
+			tracks, _ := index.await(t.Context(), 1)
+			found <- tracks
+		}()
+		synctest.Wait()
+		require.Empty(t, found, "the stream waits for the pending SUBSCRIBE_OK")
+		require.NoError(t, index.add(1, second))
+		assert.Equal(t, []*RemoteTrack{first, second}, <-found)
+
+		// A SUBSCRIBE that fails releases the stream to the established ones.
+		index.expect(third)
+		go func() {
+			tracks, _ := index.await(t.Context(), 1)
+			found <- tracks
+		}()
+		synctest.Wait()
+		require.Empty(t, found)
+		index.abandon(third)
+		assert.Equal(t, []*RemoteTrack{first, second}, <-found)
+
+		// One that is never answered holds the stream only until ctx ends.
+		index.expect(third)
+		ctx, cancel := context.WithTimeout(t.Context(), trackAliasWait)
+		defer cancel()
+		start := time.Now()
+		tracks, ok = index.await(ctx, 1)
+		require.True(t, ok)
+		assert.Equal(t, []*RemoteTrack{first, second}, tracks)
+		assert.Equal(t, trackAliasWait, time.Since(start))
+	})
+}
+
 // The PATH setup option is for native QUIC clients only.
 func TestSessionPathOptionIsQUICClientOnly(t *testing.T) {
 	_, serverConn := newMemConnPair(wire2.Version18.ALPN())

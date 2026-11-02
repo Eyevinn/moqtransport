@@ -360,6 +360,9 @@ func (s *Session) Subscribe(ctx context.Context, namespace []string, track strin
 		}
 	}()
 
+	// Data streams for this track wait for the answer from here on: they
+	// may be meant for this subscription under an alias it does not know yet.
+	s.remote.expect(rt)
 	if err := rs.write(msg); err != nil {
 		rs.cancel(StreamErrorInternal, err)
 		return nil, err
@@ -392,6 +395,11 @@ func (s *Session) peerMaxRequestUpdates() uint64 {
 // unregisterTrackAlias implements subscriberSession.
 func (s *Session) unregisterTrackAlias(alias uint64, t *RemoteTrack) {
 	s.remote.remove(alias, t)
+}
+
+// abandonTrackAlias implements subscriberSession.
+func (s *Session) abandonTrackAlias(t *RemoteTrack) {
+	s.remote.abandon(t)
 }
 
 // newTrackAlias implements publisherSession.

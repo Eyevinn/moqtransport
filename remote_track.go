@@ -22,6 +22,10 @@ type subscriberSession interface {
 	// unregisterTrackAlias drops that registration when the subscription ends.
 	unregisterTrackAlias(alias uint64, t *RemoteTrack)
 
+	// abandonTrackAlias is told about a subscription that ended without
+	// SUBSCRIBE_OK, which data streams for its track no longer wait for.
+	abandonTrackAlias(t *RemoteTrack)
+
 	// nextRequestID allocates a Request ID. A REQUEST_UPDATE consumes one of
 	// its own (draft-18 Section 10.1, draft-22 Section 6.4.2.1); it does not
 	// reuse the ID of the request it updates.
@@ -443,6 +447,8 @@ func (t *RemoteTrack) run() error {
 		t.mu.Unlock()
 		close(t.established)
 	})
+	// A no-op once SUBSCRIBE_OK has registered the alias.
+	t.session.abandonTrackAlias(t)
 
 	// A clean end with a PUBLISH_DONE that counted its streams keeps delivery
 	// (and the Track Alias, which routes late data streams here) open until
@@ -580,6 +586,7 @@ func (t *RemoteTrack) handleMessage(msg wire2.ControlMessage) error {
 			Reason: m.ErrorReason,
 		}
 		t.mu.Unlock()
+		t.session.abandonTrackAlias(t)
 		t.establishOnce.Do(func() { close(t.established) })
 		return nil
 
@@ -857,16 +864,58 @@ type remoteTrackIndex struct {
 	mu      sync.Mutex
 	byAlias map[uint64][]*RemoteTrack
 
-	// added is closed and replaced whenever an alias appears, so a data stream
-	// that overtook its SUBSCRIBE_OK can wait for it without polling.
-	added chan struct{}
+	// pending holds the subscriptions whose SUBSCRIBE has gone out and not
+	// yet been answered. A data stream for a track one of them is to may be
+	// meant for it, under an alias it does not know yet.
+	pending map[*RemoteTrack]struct{}
+
+	// changed is closed and replaced whenever an alias appears or a pending
+	// subscription is answered, so a data stream that overtook its
+	// SUBSCRIBE_OK can wait for it without polling.
+	changed chan struct{}
 }
 
 func newRemoteTrackIndex() *remoteTrackIndex {
 	return &remoteTrackIndex{
 		byAlias: map[uint64][]*RemoteTrack{},
-		added:   make(chan struct{}),
+		pending: map[*RemoteTrack]struct{}{},
+		changed: make(chan struct{}),
 	}
+}
+
+// expect records a subscription whose SUBSCRIBE is about to go out.
+func (i *remoteTrackIndex) expect(t *RemoteTrack) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.pending[t] = struct{}{}
+}
+
+// abandon drops a subscription that ended without SUBSCRIBE_OK, so data
+// streams stop waiting for it.
+func (i *remoteTrackIndex) abandon(t *RemoteTrack) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if _, ok := i.pending[t]; ok {
+		delete(i.pending, t)
+		i.notify()
+	}
+}
+
+// notify wakes every waiter. The caller holds mu.
+func (i *remoteTrackIndex) notify() {
+	close(i.changed)
+	i.changed = make(chan struct{})
+}
+
+// awaitsAnswer reports whether a subscription to the track named is still
+// waiting for its SUBSCRIBE_OK. The caller holds mu.
+func (i *remoteTrackIndex) awaitsAnswer(fullName string) bool {
+	for t := range i.pending {
+		if t.fullName() == fullName {
+			return true
+		}
+	}
+	return false
 }
 
 // add registers a track under an alias, refusing an alias that already names a
@@ -874,14 +923,14 @@ func newRemoteTrackIndex() *remoteTrackIndex {
 func (i *remoteTrackIndex) add(alias uint64, t *RemoteTrack) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	delete(i.pending, t)
+	defer i.notify()
 	for _, existing := range i.byAlias[alias] {
 		if existing.fullName() != t.fullName() {
 			return errDuplicateTrackAlias
 		}
 	}
 	i.byAlias[alias] = append(i.byAlias[alias], t)
-	close(i.added)
-	i.added = make(chan struct{})
 	return nil
 }
 
@@ -908,22 +957,37 @@ func (i *remoteTrackIndex) remove(alias uint64, t *RemoteTrack) {
 // buffering briefly rather than abandoning the stream. Blocking this stream's
 // reader is also what withholds its flow control while we wait, which the same
 // section allows.
+//
+// A known alias can still have to wait. While another SUBSCRIBE to the same
+// track is unanswered, the stream may be that subscription's, under an alias
+// its SUBSCRIBE_OK will share with the ones already established (draft-22
+// Section 3.1.3). When ctx ends first, the stream goes to the subscriptions
+// established by then.
 func (i *remoteTrackIndex) await(ctx context.Context, alias uint64) ([]*RemoteTrack, bool) {
 	for {
 		i.mu.Lock()
 		tracks := i.byAlias[alias]
-		added := i.added
+		ready := len(tracks) > 0 && !i.awaitsAnswer(tracks[0].fullName())
+		changed := i.changed
 		i.mu.Unlock()
-		if len(tracks) > 0 {
+		if ready {
 			// A copy, so the caller is not reading the slice we append to.
 			return append([]*RemoteTrack(nil), tracks...), true
 		}
 		select {
 		case <-ctx.Done():
-			return nil, false
-		case <-added:
+			return i.lookup(alias)
+		case <-changed:
 		}
 	}
+}
+
+// lookup returns the subscriptions using alias now, without waiting.
+func (i *remoteTrackIndex) lookup(alias uint64) ([]*RemoteTrack, bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	tracks := i.byAlias[alias]
+	return append([]*RemoteTrack(nil), tracks...), len(tracks) > 0
 }
 
 var (
