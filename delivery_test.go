@@ -349,3 +349,57 @@ func TestTrackAliasWaitStopsUnknownStream(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// readAvailable reads the Objects a track has buffered, stopping at the first
+// read that would block.
+func readAvailable(t *testing.T, track *RemoteTrack) []string {
+	t.Helper()
+	var payloads []string
+	for {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+		o, err := track.ReadObject(ctx)
+		cancel()
+		if err != nil {
+			return payloads
+		}
+		payloads = append(payloads, string(o.Payload))
+	}
+}
+
+// TestSubscriptionsToOneTrackKeepTheirObjects: two subscriptions on one
+// session to the same track each open their own data streams, and each
+// subscriber sees only its own subscription's Objects.
+func TestSubscriptionsToOneTrackKeepTheirObjects(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
+		subs := make(chan *Subscription, 2)
+		server := &Session{SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+			if sub, err := r.Accept(); err == nil {
+				subs <- sub
+			}
+		})}
+		client := &Session{}
+		runSessionsVersion(t, version, client, server)
+
+		first, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+		require.NoError(t, err)
+		firstSub := <-subs
+		second, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+		require.NoError(t, err)
+		secondSub := <-subs
+		assert.NotEqual(t, first.TrackAlias(), second.TrackAlias())
+
+		for _, w := range []struct {
+			sub     *Subscription
+			payload string
+		}{{firstSub, "first"}, {secondSub, "second"}} {
+			sg, err := w.sub.OpenSubgroup(1, 0, 128)
+			require.NoError(t, err)
+			_, err = sg.WriteObject(0, []byte(w.payload))
+			require.NoError(t, err)
+			require.NoError(t, sg.Close())
+		}
+		synctest.Wait()
+		assert.Equal(t, []string{"first"}, readAvailable(t, first))
+		assert.Equal(t, []string{"second"}, readAvailable(t, second))
+	})
+}

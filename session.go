@@ -130,7 +130,6 @@ type Session struct {
 
 	mu             sync.Mutex
 	nextTrackAlias uint64
-	localAliases   map[string]uint64
 
 	// incomingSubs indexes the subscriptions this endpoint has accepted, by
 	// the Request ID the peer gave them. A Joining FETCH names one of these.
@@ -178,7 +177,6 @@ func (s *Session) Run(ctx context.Context, conn Connection) error {
 	s.peerIDs = newPeerRequestIDs(conn.Perspective())
 	s.remote = newRemoteTrackIndex()
 	s.prefixes = newPrefixRegistry()
-	s.localAliases = map[string]uint64{}
 	s.incomingSubs = map[uint64]*Subscription{}
 	s.fetchReceivers = map[uint64]fetchReceiver{}
 	s.pendingUni = newPendingStreams[pendingUniStream](s.MaxPendingStreams)
@@ -396,22 +394,19 @@ func (s *Session) unregisterTrackAlias(alias uint64, t *RemoteTrack) {
 	s.remote.remove(alias, t)
 }
 
-// trackAlias implements publisherSession.
+// newTrackAlias implements publisherSession.
 //
-// One alias per track, shared by every subscription to it. Section 11.1
-// forbids one alias naming two tracks; it says nothing against two
-// subscriptions to one track sharing an alias, and a subscriber that has
-// subscribed twice would otherwise be sent every Object twice.
-func (s *Session) trackAlias(namespace []string, track string) uint64 {
-	key := strings.Join(namespace, "/") + "\x00" + track
+// Every subscription gets an alias of its own, also when it is to a track
+// that another subscription on this session already receives. Two
+// subscriptions to one track may share an alias (draft-22 Section 3.1.3), but
+// each opens its own data streams, and a subscriber cannot tell which of two
+// subscriptions sharing an alias a stream is for: it delivers the stream to
+// both, and one that overtakes its own SUBSCRIBE_OK only to the older one.
+func (s *Session) newTrackAlias() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if alias, ok := s.localAliases[key]; ok {
-		return alias
-	}
 	alias := s.nextTrackAlias
 	s.nextTrackAlias++
-	s.localAliases[key] = alias
 	return alias
 }
 
