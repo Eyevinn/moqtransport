@@ -31,11 +31,9 @@ func (f SubscribeHandlerFunc) HandleSubscribe(r *SubscribeRequest) { f(r) }
 // whole session, and so the coupling stays visible: three calls, all of them
 // about getting Objects onto the connection.
 type publisherSession interface {
-	// trackAlias returns the alias this session uses for a track, allocating
-	// one on first use. The same track always gets the same alias, because
-	// Section 11.1 forbids one alias naming two tracks at once but says
-	// nothing against two concurrent subscriptions to one track sharing it.
-	trackAlias(namespace []string, track string) uint64
+	// newTrackAlias allocates the alias for a new subscription. No two
+	// subscriptions on a session share one.
+	newTrackAlias() uint64
 
 	// openUniStream opens a unidirectional stream for a subgroup.
 	openUniStream(ctx context.Context) (SendStream, error)
@@ -207,7 +205,7 @@ func (r *SubscribeRequest) Accept(opts ...SubscribeOkOption) (*Subscription, err
 	}
 
 	ok := &wire2.SubscribeOk{
-		TrackAlias: r.session.trackAlias(r.namespace, r.track),
+		TrackAlias: r.session.newTrackAlias(),
 		Parameters: wire2.Parameters{},
 	}
 	for _, opt := range opts {

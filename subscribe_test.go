@@ -13,10 +13,10 @@ import (
 )
 
 // fakePublisherSession stands in for the session a subscription belongs to. It
-// hands out aliases per track and records everything that leaves.
+// hands out an alias per subscription and records everything that leaves.
 type fakePublisherSession struct {
 	mu            sync.Mutex
-	aliases       map[string]uint64
+	nextAlias     uint64
 	streams       []*sendCapture
 	datagrams     [][]byte
 	subscriptions map[uint64]*Subscription
@@ -28,21 +28,14 @@ type fakePublisherSession struct {
 }
 
 func newFakePublisherSession(t *testing.T) *fakePublisherSession {
-	return &fakePublisherSession{aliases: map[string]uint64{}, t: t}
+	return &fakePublisherSession{t: t}
 }
 
-func (s *fakePublisherSession) trackAlias(namespace []string, track string) uint64 {
+func (s *fakePublisherSession) newTrackAlias() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := track
-	for _, f := range namespace {
-		key = f + "/" + key
-	}
-	if alias, ok := s.aliases[key]; ok {
-		return alias
-	}
-	alias := uint64(len(s.aliases))
-	s.aliases[key] = alias
+	alias := s.nextAlias
+	s.nextAlias++
 	return alias
 }
 
@@ -194,10 +187,9 @@ func TestSubscribeAcceptSendsSubscribeOk(t *testing.T) {
 	assert.ErrorIs(t, req.Reject(RequestErrorInternal, "too late"), errRequestAlreadyAnswered)
 }
 
-// Two subscriptions to the same track share an alias; different tracks do not.
-// Section 11.1 forbids one alias naming two tracks, not one track having two
-// subscriptions.
-func TestSubscribeTrackAliasPerTrack(t *testing.T) {
+// Every subscription gets an alias of its own, also a second one to the same
+// track: the subscriber routes data streams by alias alone.
+func TestSubscribeTrackAliasPerSubscription(t *testing.T) {
 	first, _, session := newIncomingSubscribe(t, nil)
 	defer first.cancel(StreamErrorCancelled, errors.New("test over"))
 
@@ -222,8 +214,9 @@ func TestSubscribeTrackAliasPerTrack(t *testing.T) {
 	c, err := other.Accept()
 	require.NoError(t, err)
 
-	assert.Equal(t, a.TrackAlias(), b.TrackAlias(), "same track, same alias")
-	assert.NotEqual(t, a.TrackAlias(), c.TrackAlias(), "different track, different alias")
+	assert.NotEqual(t, a.TrackAlias(), b.TrackAlias(), "same track, different subscriptions")
+	assert.NotEqual(t, a.TrackAlias(), c.TrackAlias(), "different track")
+	assert.NotEqual(t, b.TrackAlias(), c.TrackAlias(), "different track")
 }
 
 func TestSubscribeReject(t *testing.T) {
