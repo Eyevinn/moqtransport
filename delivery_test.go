@@ -468,3 +468,34 @@ func TestSharedAliasStreamWaitsForPendingSubscribe(t *testing.T) {
 		assert.Equal(t, []string{"shared"}, readAvailable(t, second))
 	})
 }
+
+// TestDatagramForUnknownAliasIsDropped: a datagram under an alias no
+// subscription uses is dropped, and the datagrams behind it still arrive.
+func TestDatagramForUnknownAliasIsDropped(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
+		subs := make(chan *Subscription, 1)
+		server := &Session{SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+			if sub, err := r.Accept(); err == nil {
+				subs <- sub
+			}
+		})}
+		client := &Session{}
+		runSessionsVersion(t, version, client, server)
+
+		track, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+		require.NoError(t, err)
+		sub := <-subs
+
+		stray, err := wire2.AppendObjectDatagram(nil, &wire2.ObjectDatagram{
+			TrackAlias: track.TrackAlias() + 1,
+			GroupID:    1,
+			Payload:    []byte("stray"),
+		})
+		require.NoError(t, err)
+		require.NoError(t, server.conn.SendDatagram(stray))
+		require.NoError(t, sub.SendDatagram(Object{GroupID: 1, Payload: []byte("known")}))
+
+		synctest.Wait()
+		assert.Equal(t, []string{"known"}, readAvailable(t, track))
+	})
+}
