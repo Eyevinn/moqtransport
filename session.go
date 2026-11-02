@@ -785,8 +785,9 @@ func (s *Session) receiveDatagrams() {
 
 		// Unlike a subgroup stream there is nothing to hold open here, so a
 		// datagram for an alias we do not know is dropped rather than waited
-		// on. Section 11.3 allows exactly that.
-		tracks, ok := s.remote.await(s.ctx, datagram.TrackAlias)
+		// on. Section 11.3 allows exactly that. Waiting would also hold up
+		// every datagram behind it.
+		tracks, ok := s.remote.lookup(datagram.TrackAlias)
 		if !ok {
 			continue
 		}
