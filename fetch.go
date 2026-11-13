@@ -949,6 +949,7 @@ func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) 
 	}
 
 	objects := wire2.NewFetchReader(reader, order, s.version)
+	objects.MaxObjectSize = s.maxObjectSize()
 	for {
 		record, err := objects.Next()
 		if err != nil {
@@ -958,6 +959,7 @@ func (s *Session) handleFetchStream(stream ReceiveStream, reader *bufio.Reader) 
 				fetch.responseComplete(true)
 				return
 			}
+			s.abandonOversizedObject(stream, err)
 			s.failIfProtocolError(err)
 			fetch.responseComplete(false)
 			return

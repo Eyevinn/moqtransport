@@ -104,6 +104,14 @@ type Session struct {
 	// sends SETUP.
 	MaxPendingStreams int
 
+	// MaxObjectSize bounds, in bytes, the payload and the Properties block of
+	// each Object received on a subgroup or fetch stream. Zero uses a default
+	// of 64 MiB. The draft sets no limit, so an Object above it is not a
+	// protocol violation: the stream carrying it is stopped with
+	// EXCESSIVE_LOAD and the session goes on. Datagrams need no limit, since
+	// a datagram is no larger than the path allows.
+	MaxObjectSize int
+
 	// SubgroupEndEvents makes every subscription of this session deliver a
 	// synthetic Object when one of its subgroup streams ends -- EndsSubgroup
 	// for a FIN, SubgroupReset for a reset -- so a consumer (a relay
@@ -596,6 +604,7 @@ func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reade
 	}
 
 	receiver := newSubgroupReceiver(stream, header, reader, tracks[0].defaultPriority(), s.qlog, s.version)
+	receiver.reader.MaxObjectSize = s.maxObjectSize()
 	err = receiver.receive(func(o *Object) error {
 		for _, t := range tracks {
 			if err := t.deliver(s.ctx, o); err != nil {
@@ -605,6 +614,7 @@ func (s *Session) handleSubgroupStream(stream ReceiveStream, reader *bufio.Reade
 		return nil
 	})
 	if err != nil {
+		s.abandonOversizedObject(stream, err)
 		s.failIfProtocolError(err)
 	}
 	// The stream is over: deliver the end-of-subgroup marker (on sessions
@@ -833,6 +843,21 @@ func (s *Session) failIfProtocolError(err error) {
 	var protocolErr ProtocolError
 	if errors.As(err, &protocolErr) {
 		s.fail(err)
+	}
+}
+
+// maxObjectSize is the MaxObjectSize the data stream readers apply. Zero
+// leaves the choice to wire2.DefaultMaxObjectSize.
+func (s *Session) maxObjectSize() uint64 {
+	return uint64(max(s.MaxObjectSize, 0))
+}
+
+// abandonOversizedObject stops a data stream whose reader gave up on an Object
+// over MaxObjectSize, so the peer stops sending the rest of it. The limit is
+// ours rather than the draft's, so the stream goes and the session stays.
+func (s *Session) abandonOversizedObject(stream ReceiveStream, err error) {
+	if errors.Is(err, wire2.ErrObjectTooLarge) {
+		stream.Stop(uint32(StreamErrorExcessiveLoad))
 	}
 }
 

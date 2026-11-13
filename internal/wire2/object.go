@@ -1,11 +1,32 @@
 package wire2
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/Eyevinn/locmaf/vi64"
 )
+
+// DefaultMaxObjectSize is the largest Object payload, and the largest Object
+// Properties block, that a data stream reader accepts when its MaxObjectSize
+// is zero. The draft sets no limit of its own; both lengths are vi64s, and a
+// reader that believed any of them would let one header ask it for more
+// memory than it has.
+const DefaultMaxObjectSize = 64 << 20
+
+// ErrObjectTooLarge means an Object's payload or Properties block declared a
+// length above the reader's MaxObjectSize. It is a local resource limit, not
+// a protocol violation: the session layer abandons the stream and keeps the
+// session.
+var ErrObjectTooLarge = errors.New("object exceeds the maximum object size")
+
+// eagerAlloc is the largest declared length read into a buffer allocated in
+// one go. Above it the buffer grows with the bytes that actually arrive, so a
+// header that declares a large Object without sending it costs at most this
+// much.
+const eagerAlloc = 1 << 20
 
 // ObjectStatus says whether an Object is a normal Object or marks the end of a
 // Group or Track (draft-ietf-moq-transport-18, Section 11.2.1.1).
@@ -64,7 +85,7 @@ type byteReader interface {
 // Unknown Property types are not an error. Properties are relay-visible and
 // forwarded unchanged, so a parser that rejected what it did not recognise
 // would break the forwarding model; only scope violations are rejected.
-func readProperties(r byteReader, version Version) (KVPList, error) {
+func readProperties(r byteReader, version Version, limit uint64) (KVPList, error) {
 	length, err := vi64.Read(r)
 	if err != nil {
 		return nil, unexpectedEOF(err)
@@ -72,9 +93,9 @@ func readProperties(r byteReader, version Version) (KVPList, error) {
 	if length == 0 {
 		return KVPList{}, nil
 	}
-	body := make([]byte, length)
-	if _, err := io.ReadFull(r, body); err != nil {
-		return nil, unexpectedEOF(err)
+	body, err := readBytes(r, length, limit)
+	if err != nil {
+		return nil, err
 	}
 	var pp KVPList
 	if _, err := pp.parseAll(body); err != nil {
@@ -86,13 +107,34 @@ func readProperties(r byteReader, version Version) (KVPList, error) {
 	return pp, nil
 }
 
-// readPayload reads length bytes of Object payload.
-func readPayload(r io.Reader, length uint64) ([]byte, error) {
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, unexpectedEOF(err)
+// readBytes reads a length-prefixed Object field of length bytes: a payload or
+// a Properties block. A length above limit is ErrObjectTooLarge, and a limit of
+// zero means DefaultMaxObjectSize.
+func readBytes(r io.Reader, length, limit uint64) ([]byte, error) {
+	if limit == 0 {
+		limit = DefaultMaxObjectSize
 	}
-	return payload, nil
+	if length > limit {
+		return nil, ErrObjectTooLarge
+	}
+	if length <= eagerAlloc {
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, unexpectedEOF(err)
+		}
+		return buf, nil
+	}
+	buf := make([]byte, 0, eagerAlloc)
+	for uint64(len(buf)) < length {
+		n := int(min(length-uint64(len(buf)), eagerAlloc))
+		buf = slices.Grow(buf, n)
+		got, err := io.ReadFull(r, buf[len(buf):len(buf)+n])
+		buf = buf[:len(buf)+got]
+		if err != nil {
+			return nil, unexpectedEOF(err)
+		}
+	}
+	return buf, nil
 }
 
 // addObjectID computes prev + delta + 1, the rule every delta-encoded Object

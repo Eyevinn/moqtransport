@@ -499,3 +499,42 @@ func TestDatagramForUnknownAliasIsDropped(t *testing.T) {
 		assert.Equal(t, []string{"known"}, readAvailable(t, track))
 	})
 }
+
+// TestOversizedObjectStopsOnlyItsStream: an Object over MaxObjectSize stops
+// the stream carrying it with EXCESSIVE_LOAD. The limit is local policy, not a
+// protocol violation, so the session and the subscription carry on.
+func TestOversizedObjectStopsOnlyItsStream(t *testing.T) {
+	forEachVersion(t, func(t *testing.T, version wire2.Version) {
+		subs := make(chan *Subscription, 1)
+		server := &Session{SubscribeHandler: SubscribeHandlerFunc(func(r *SubscribeRequest) {
+			if sub, err := r.Accept(); err == nil {
+				subs <- sub
+			}
+		})}
+		client := &Session{MaxObjectSize: 8}
+		runSessionsVersion(t, version, client, server)
+
+		track, err := client.Subscribe(t.Context(), []string{"ns"}, "track")
+		require.NoError(t, err)
+		sub := <-subs
+
+		big, err := sub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		_, err = big.WriteObject(0, []byte("more than eight bytes"))
+		require.NoError(t, err)
+		synctest.Wait()
+		_, err = big.WriteObject(1, []byte("x"))
+		var stopped *memStreamError
+		require.ErrorAs(t, err, &stopped, "the stream is stopped")
+		assert.Equal(t, uint32(StreamErrorExcessiveLoad), stopped.code)
+
+		small, err := sub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = small.WriteObject(0, []byte("eight b."))
+		require.NoError(t, err)
+		require.NoError(t, small.Close())
+		synctest.Wait()
+		assert.Equal(t, []string{"eight b."}, readAvailable(t, track))
+		assert.NoError(t, client.ctx.Err(), "the session is still up")
+	})
+}
