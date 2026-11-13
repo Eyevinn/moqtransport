@@ -145,6 +145,10 @@ type FetchReader struct {
 	// omitted the parameter is Ascending.
 	GroupOrder GroupOrder
 
+	// MaxObjectSize bounds each Object's payload and Properties block; a
+	// larger one is ErrObjectTooLarge. Zero means DefaultMaxObjectSize.
+	MaxObjectSize uint64
+
 	r       byteReader
 	version Version
 
@@ -261,7 +265,7 @@ func (f *FetchReader) Next() (*FetchObject, error) {
 	}
 
 	if flags&fetchFlagProperties != 0 {
-		if obj.Properties, err = readProperties(f.r, f.version); err != nil {
+		if obj.Properties, err = readProperties(f.r, f.version, f.MaxObjectSize); err != nil {
 			return nil, err
 		}
 	}
@@ -271,7 +275,7 @@ func (f *FetchReader) Next() (*FetchObject, error) {
 		return nil, unexpectedEOF(err)
 	}
 	if payloadLen > 0 {
-		if obj.Payload, err = readPayload(f.r, payloadLen); err != nil {
+		if obj.Payload, err = readBytes(f.r, payloadLen, f.MaxObjectSize); err != nil {
 			return nil, err
 		}
 	}

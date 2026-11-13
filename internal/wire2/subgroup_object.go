@@ -29,6 +29,10 @@ type SubgroupReader struct {
 	// first Object arrives, when the mode says the first Object ID is it.
 	Header *SubgroupHeader
 
+	// MaxObjectSize bounds each Object's payload and Properties block; a
+	// larger one is ErrObjectTooLarge. Zero means DefaultMaxObjectSize.
+	MaxObjectSize uint64
+
 	r            byteReader
 	version      Version
 	prevObjectID uint64
@@ -63,7 +67,7 @@ func (s *SubgroupReader) Next() (*SubgroupObject, error) {
 	}
 
 	if s.Header.HasProperties {
-		if obj.Properties, err = readProperties(s.r, s.version); err != nil {
+		if obj.Properties, err = readProperties(s.r, s.version, s.MaxObjectSize); err != nil {
 			return nil, err
 		}
 	}
@@ -84,7 +88,7 @@ func (s *SubgroupReader) Next() (*SubgroupObject, error) {
 		if obj.Status != ObjectStatusNormal && len(obj.Properties) > 0 {
 			return nil, errPropertiesOnNonNormalObject
 		}
-	} else if obj.Payload, err = readPayload(s.r, payloadLen); err != nil {
+	} else if obj.Payload, err = readBytes(s.r, payloadLen, s.MaxObjectSize); err != nil {
 		return nil, err
 	}
 
