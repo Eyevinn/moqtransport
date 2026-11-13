@@ -72,3 +72,52 @@ func TestPeerRequestIDMemoryIsBounded(t *testing.T) {
 	assert.Empty(t, ids.ahead)
 	assert.Equal(t, uint64(10_000), ids.lowest)
 }
+
+// A hole that never fills -- a request the peer cancelled before its message
+// arrived, or an ID it skipped -- must not make the tracker hold every later
+// ID. The IDs held stay within the window however many arrive (#173 in
+// Eyevinn/moqlivemock: ID 0 withheld, millions of later IDs sent).
+func TestPeerRequestIDPermanentHoleIsBounded(t *testing.T) {
+	ids := newPeerRequestIDs(PerspectiveServer)
+	for id := uint64(2); id < 4*2*peerIDWindow; id += 2 {
+		require.NoError(t, ids.use(id))
+		require.LessOrEqual(t, len(ids.ahead), peerIDWindow)
+	}
+	// The run caught up once the hole at 0 fell out of the window.
+	assert.Empty(t, ids.ahead)
+	assert.Equal(t, uint64(4*2*peerIDWindow), ids.lowest)
+	// The given-up ID counts as used.
+	assert.ErrorIs(t, ids.use(0), errDuplicateRequestID)
+}
+
+// IDs within the window keep the exact behaviour: a late arrival is accepted
+// and a repeat is a duplicate.
+func TestPeerRequestIDLateWithinWindow(t *testing.T) {
+	ids := newPeerRequestIDs(PerspectiveServer)
+	last := uint64(2 * (peerIDWindow - 1))
+	for id := uint64(2); id <= last; id += 2 {
+		require.NoError(t, ids.use(id))
+	}
+	assert.Len(t, ids.ahead, peerIDWindow-1)
+	require.NoError(t, ids.use(0), "the oldest hole is still within the window")
+	assert.Empty(t, ids.ahead)
+	assert.ErrorIs(t, ids.use(last), errDuplicateRequestID)
+}
+
+// One ID far ahead moves the window in one step, forgetting the IDs held
+// below it, and the peer can go on from there.
+func TestPeerRequestIDFarJump(t *testing.T) {
+	ids := newPeerRequestIDs(PerspectiveServer)
+	require.NoError(t, ids.use(4))
+	require.NoError(t, ids.use(8))
+
+	far := uint64(1) << 40
+	require.NoError(t, ids.use(far))
+	assert.Len(t, ids.ahead, 1)
+	assert.Equal(t, far-2*(peerIDWindow-1), ids.lowest)
+
+	assert.ErrorIs(t, ids.use(8), errDuplicateRequestID, "below the window counts as used")
+	assert.ErrorIs(t, ids.use(far), errDuplicateRequestID)
+	require.NoError(t, ids.use(far-2), "a hole inside the window is still open")
+	require.NoError(t, ids.use(far+2))
+}

@@ -40,22 +40,34 @@ func (g *requestIDGenerator) nextID() uint64 {
 // whose least significant bit is wrong for its sender, and a duplicate. The
 // first is a parity test; the second needs memory.
 //
-// The memory is bounded rather than a set of everything seen. The peer issues
-// its IDs in order, stepping by 2, so the used set is always a contiguous run
-// with at most a few holes where requests are still in flight and arriving out
-// of order. Tracking the low water mark plus those holes is exact and stays
-// small, where a set of every ID ever seen would grow without limit on a
-// long-lived session.
+// The peer issues its IDs in order, stepping by 2, so the used set is a
+// contiguous run with holes where requests are still in flight and arriving
+// out of order. The tracker keeps the low water mark plus the IDs seen above
+// it, and absorbs them into the mark as the holes fill.
+//
+// Not every hole fills. A request cancelled before its message arrived (the
+// peer resets the stream first) leaves its ID unused for good, and a peer can
+// skip IDs on purpose. So the IDs held above the mark are capped at
+// peerIDWindow: an ID further ahead than that moves the mark up, giving up on
+// the oldest holes as if their IDs had been used. Memory per session stays
+// bounded, and a peer only trips the duplicate check by sending an ID more
+// than peerIDWindow requests late, which no in-flight request is.
 type peerRequestIDs struct {
 	lock sync.Mutex
 
-	// lowest is the smallest ID the peer has not used yet. Everything below it
-	// has been seen.
+	// lowest is the smallest ID the peer may still use. Everything below it
+	// has been seen or given up on.
 	lowest uint64
 
-	// ahead holds IDs seen out of order, above lowest.
+	// ahead holds IDs seen out of order, above lowest and less than
+	// peerIDWindow IDs from it.
 	ahead map[uint64]struct{}
 }
+
+// peerIDWindow is how many of the peer's IDs, from the low water mark up, the
+// tracker follows. It is far more than the requests a peer has in flight at
+// once, which QUIC's stream limit already bounds.
+const peerIDWindow = 4096
 
 // newPeerRequestIDs returns the tracker for the peer of an endpoint with
 // perspective p.
@@ -84,6 +96,9 @@ func (t *peerRequestIDs) use(id uint64) error {
 		return errDuplicateRequestID
 	}
 
+	if (id-t.lowest)/2 >= peerIDWindow {
+		t.raiseLowest(id - 2*(peerIDWindow-1))
+	}
 	t.ahead[id] = struct{}{}
 	// Absorb the run that is now contiguous, so only genuine holes are kept.
 	for {
@@ -93,6 +108,25 @@ func (t *peerRequestIDs) use(id uint64) error {
 		delete(t.ahead, t.lowest)
 		t.lowest += 2
 	}
+}
+
+// raiseLowest moves the low water mark up to mark, which has lowest's parity,
+// forgetting the IDs below it. Stepping through the IDs costs one step per ID
+// the mark passes, and scanning the map one per ID held; taking the cheaper
+// keeps a mark that jumps far ahead from costing more than the IDs held.
+func (t *peerRequestIDs) raiseLowest(mark uint64) {
+	if (mark-t.lowest)/2 <= uint64(len(t.ahead)) {
+		for ; t.lowest < mark; t.lowest += 2 {
+			delete(t.ahead, t.lowest)
+		}
+		return
+	}
+	for id := range t.ahead {
+		if id < mark {
+			delete(t.ahead, id)
+		}
+	}
+	t.lowest = mark
 }
 
 var (
